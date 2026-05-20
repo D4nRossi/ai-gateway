@@ -37,12 +37,16 @@ import (
 	"time"
 
 	"github.com/D4nRossi/ai-gateway/internal/api"
+	adminapi "github.com/D4nRossi/ai-gateway/internal/api/admin"
 	"github.com/D4nRossi/ai-gateway/internal/api/handlers"
+	"github.com/D4nRossi/ai-gateway/internal/app/adminservice"
 	"github.com/D4nRossi/ai-gateway/internal/audit"
 	"github.com/D4nRossi/ai-gateway/internal/auth"
 	"github.com/D4nRossi/ai-gateway/internal/budget"
 	"github.com/D4nRossi/ai-gateway/internal/config"
 	"github.com/D4nRossi/ai-gateway/internal/db"
+	"github.com/D4nRossi/ai-gateway/internal/infra/crypto"
+	pginfra "github.com/D4nRossi/ai-gateway/internal/infra/postgres"
 	"github.com/D4nRossi/ai-gateway/internal/observability"
 	"github.com/D4nRossi/ai-gateway/internal/providers"
 	"github.com/D4nRossi/ai-gateway/internal/providers/azureopenai"
@@ -109,6 +113,32 @@ func run() error {
 	}
 	logger.Info("migrations applied")
 
+	// ── 5a. Admin infrastructure ──────────────────────────────────────────────
+	// AES-256-GCM encrypter for proxy target credentials (ADR-0012).
+	encrypter, err := crypto.NewAESGCMEncrypter(cfg.Database.EncryptionKeyHex)
+	if err != nil {
+		return fmt.Errorf("initializing AES-GCM encrypter: %w", err)
+	}
+
+	adminRepo := pginfra.NewAdminRepo(pool)
+	appRepo := pginfra.NewApplicationRepo(pool)
+	endpointRepo := pginfra.NewEndpointRepo(pool, encrypter)
+
+	adminSvc := adminservice.New(appRepo, endpointRepo, adminRepo, logger, 0)
+
+	adminRouter := adminapi.NewRouter(adminapi.Deps{
+		Svc:    adminSvc,
+		Pool:   pool,
+		Logger: logger,
+	})
+	logger.Info("admin api configured")
+
+	// Purge stale sessions at startup so the admin_sessions table stays bounded.
+	// Errors are non-fatal — the gateway can run with stale rows.
+	if err := adminSvc.PurgeExpiredSessions(ctx); err != nil {
+		logger.Warn("failed to purge expired admin sessions at startup", "err", err)
+	}
+
 	// ── 6. PolicyStore ────────────────────────────────────────────────────────
 	policyStore := auth.NewPolicyStore(cfg.Applications)
 
@@ -173,12 +203,13 @@ func run() error {
 
 	// ── 13. Build router ──────────────────────────────────────────────────────
 	routerDeps := api.RouterDeps{
-		Config:      cfg,
-		PolicyStore: policyStore,
-		RateLimiter: rateMgr,
-		AuditWriter: auditWriter,
-		Pool:        pool,
-		Logger:      logger,
+		Config:       cfg,
+		PolicyStore:  policyStore,
+		RateLimiter:  rateMgr,
+		AuditWriter:  auditWriter,
+		Pool:         pool,
+		Logger:       logger,
+		AdminHandler: adminRouter,
 		ChatDeps: handlers.ChatDeps{
 			Provider:     prov,
 			Config:       cfg,

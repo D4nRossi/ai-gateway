@@ -10,7 +10,15 @@
 //   - docs/v2-alignment.md — response A (admin auth) and role definitions
 package admin
 
-import "time"
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+// ErrNotFound is returned by Repository methods when the requested AdminUser or
+// AdminSession does not exist. Callers use errors.Is(err, admin.ErrNotFound).
+var ErrNotFound = errors.New("admin entity not found")
 
 // Role names the permission level of an admin user.
 type Role string
@@ -80,42 +88,47 @@ type AdminSession struct {
 }
 
 // Repository defines the persistence contract for AdminUser and AdminSession entities.
+// All methods accept a context.Context as first argument (CLAUDE.md §5.5).
 // The implementation lives in internal/infra/postgres/adminrepo.go.
 //
 // References:
+//   - ADR-0011 — opaque session token authentication
 //   - ADR-0015 — repository interfaces belong in the domain package
 type Repository interface {
 	// CreateUser persists a new AdminUser and returns it with ID and timestamps set.
-	CreateUser(user AdminUser) (AdminUser, error)
+	CreateUser(ctx context.Context, user AdminUser) (AdminUser, error)
 
 	// GetUser retrieves an AdminUser by its surrogate ID.
-	GetUser(id int64) (AdminUser, error)
+	// Returns ErrNotFound if no row matches.
+	GetUser(ctx context.Context, id int64) (AdminUser, error)
 
 	// GetUserByUsername retrieves an active AdminUser by username.
-	// Used during login to verify credentials.
-	GetUserByUsername(username string) (AdminUser, error)
+	// Returns ErrNotFound if no active row matches.
+	GetUserByUsername(ctx context.Context, username string) (AdminUser, error)
 
 	// UpdateUser persists changes to an existing AdminUser. ID must be set.
-	UpdateUser(user AdminUser) (AdminUser, error)
+	// Returns ErrNotFound if no row matches.
+	UpdateUser(ctx context.Context, user AdminUser) (AdminUser, error)
 
 	// ListUsers returns all AdminUsers (active and inactive), ordered by username.
-	ListUsers() ([]AdminUser, error)
+	ListUsers(ctx context.Context) ([]AdminUser, error)
 
 	// CreateSession persists a new AdminSession and returns it with ID set.
-	CreateSession(session AdminSession) (AdminSession, error)
+	CreateSession(ctx context.Context, session AdminSession) (AdminSession, error)
 
 	// GetSessionByTokenHash retrieves an active (non-revoked, non-expired) session
 	// matching the given SHA-256 hex token hash. Used by the admin auth middleware.
-	GetSessionByTokenHash(tokenHash string) (AdminSession, error)
+	// Returns ErrNotFound if no matching active session exists.
+	GetSessionByTokenHash(ctx context.Context, tokenHash string) (AdminSession, error)
 
 	// RevokeSession sets revoked_at on the session identified by ID.
-	RevokeSession(id int64) error
+	// Returns ErrNotFound if no active session with that ID exists.
+	RevokeSession(ctx context.Context, id int64) error
 
 	// RevokeAllUserSessions revokes all active sessions for a given user.
-	// Used when deactivating a user or forcing re-login.
-	RevokeAllUserSessions(userID int64) error
+	RevokeAllUserSessions(ctx context.Context, userID int64) error
 
 	// DeleteExpiredSessions removes rows where expires_at < NOW() or revoked_at IS NOT NULL.
-	// Run at boot and periodically to prevent unbounded table growth.
-	DeleteExpiredSessions() error
+	// Safe to run at boot and periodically to bound table growth.
+	DeleteExpiredSessions(ctx context.Context) error
 }

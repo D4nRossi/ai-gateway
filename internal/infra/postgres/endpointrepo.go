@@ -13,6 +13,9 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/infra/crypto"
 )
 
+// Compile-time assertion: EndpointRepo must satisfy endpoint.Repository.
+var _ endpoint.Repository = (*EndpointRepo)(nil)
+
 // EndpointRepo is the pgx implementation of endpoint.Repository.
 // It depends on an Encrypter to encrypt and decrypt TargetAuth credentials
 // stored in proxy_targets.auth_config_enc (ADR-0012).
@@ -53,7 +56,7 @@ func (r *EndpointRepo) Get(ctx context.Context, id int64) (endpoint.ProxyEndpoin
 	ep, err := scanEndpoint(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return endpoint.ProxyEndpoint{}, fmt.Errorf("proxy endpoint id=%d not found: %w", id, ErrNotFound)
+			return endpoint.ProxyEndpoint{}, fmt.Errorf("proxy endpoint id=%d: %w", id, endpoint.ErrNotFound)
 		}
 		return endpoint.ProxyEndpoint{}, fmt.Errorf("getting proxy endpoint id=%d: %w", id, err)
 	}
@@ -66,7 +69,6 @@ func (r *EndpointRepo) Get(ctx context.Context, id int64) (endpoint.ProxyEndpoin
 }
 
 // GetBySlug retrieves an active ProxyEndpoint by slug including its active targets.
-// This is on the hot path of every proxy request.
 func (r *EndpointRepo) GetBySlug(ctx context.Context, slug string) (endpoint.ProxyEndpoint, error) {
 	const q = `
 		SELECT id, slug, name, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
@@ -76,7 +78,7 @@ func (r *EndpointRepo) GetBySlug(ctx context.Context, slug string) (endpoint.Pro
 	ep, err := scanEndpoint(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return endpoint.ProxyEndpoint{}, fmt.Errorf("proxy endpoint %q not found: %w", slug, ErrNotFound)
+			return endpoint.ProxyEndpoint{}, fmt.Errorf("proxy endpoint %q: %w", slug, endpoint.ErrNotFound)
 		}
 		return endpoint.ProxyEndpoint{}, fmt.Errorf("getting proxy endpoint %q: %w", slug, err)
 	}
@@ -129,7 +131,7 @@ func (r *EndpointRepo) Update(ctx context.Context, ep endpoint.ProxyEndpoint) (e
 	)
 	if err := row.Scan(&ep.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return endpoint.ProxyEndpoint{}, fmt.Errorf("proxy endpoint id=%d not found: %w", ep.ID, ErrNotFound)
+			return endpoint.ProxyEndpoint{}, fmt.Errorf("proxy endpoint id=%d: %w", ep.ID, endpoint.ErrNotFound)
 		}
 		return endpoint.ProxyEndpoint{}, fmt.Errorf("updating proxy endpoint id=%d: %w", ep.ID, err)
 	}
@@ -145,17 +147,16 @@ func (r *EndpointRepo) Delete(ctx context.Context, id int64) error {
 		return fmt.Errorf("deleting proxy endpoint id=%d: %w", id, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("proxy endpoint id=%d not found: %w", id, ErrNotFound)
+		return fmt.Errorf("proxy endpoint id=%d: %w", id, endpoint.ErrNotFound)
 	}
 	return nil
 }
 
-// AddTarget inserts a new Target for an endpoint. TargetAuth credentials are encrypted
-// before storage (ADR-0012). Returns the target with ID set.
+// AddTarget inserts a new Target, encrypting its auth credentials (ADR-0012).
 func (r *EndpointRepo) AddTarget(ctx context.Context, t endpoint.Target) (endpoint.Target, error) {
 	enc, err := r.encryptAuth(t.Auth)
 	if err != nil {
-		return endpoint.Target{}, fmt.Errorf("encrypting target auth for endpoint id=%d: %w", t.EndpointID, err)
+		return endpoint.Target{}, fmt.Errorf("encrypting auth for target in endpoint id=%d: %w", t.EndpointID, err)
 	}
 
 	const q = `
@@ -173,11 +174,11 @@ func (r *EndpointRepo) AddTarget(ctx context.Context, t endpoint.Target) (endpoi
 }
 
 // UpdateTarget persists changes to an existing Target. ID must be set.
-// Re-encrypts auth credentials.
+// Auth credentials are re-encrypted on every update.
 func (r *EndpointRepo) UpdateTarget(ctx context.Context, t endpoint.Target) (endpoint.Target, error) {
 	enc, err := r.encryptAuth(t.Auth)
 	if err != nil {
-		return endpoint.Target{}, fmt.Errorf("encrypting target auth for target id=%d: %w", t.ID, err)
+		return endpoint.Target{}, fmt.Errorf("encrypting auth for target id=%d: %w", t.ID, err)
 	}
 
 	const q = `
@@ -190,7 +191,7 @@ func (r *EndpointRepo) UpdateTarget(ctx context.Context, t endpoint.Target) (end
 		return endpoint.Target{}, fmt.Errorf("updating proxy target id=%d: %w", t.ID, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return endpoint.Target{}, fmt.Errorf("proxy target id=%d not found: %w", t.ID, ErrNotFound)
+		return endpoint.Target{}, fmt.Errorf("proxy target id=%d: %w", t.ID, endpoint.ErrNotFound)
 	}
 	return t, nil
 }
@@ -204,7 +205,7 @@ func (r *EndpointRepo) RemoveTarget(ctx context.Context, targetID int64) error {
 		return fmt.Errorf("removing proxy target id=%d: %w", targetID, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("proxy target id=%d not found: %w", targetID, ErrNotFound)
+		return fmt.Errorf("proxy target id=%d: %w", targetID, endpoint.ErrNotFound)
 	}
 	return nil
 }
@@ -278,7 +279,6 @@ func (r *EndpointRepo) ListGrantedApplicationIDs(ctx context.Context, endpointID
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-// loadTargets retrieves all active targets for an endpoint, decrypting their auth credentials.
 func (r *EndpointRepo) loadTargets(ctx context.Context, endpointID int64) ([]endpoint.Target, error) {
 	const q = `
 		SELECT id, endpoint_id, url, weight, auth_type, auth_config_enc, active, created_at
@@ -317,18 +317,16 @@ func (r *EndpointRepo) loadTargets(ctx context.Context, endpointID int64) ([]end
 	return targets, nil
 }
 
-// encryptAuth serializes a TargetAuth to JSON and encrypts it.
-// Returns nil when auth.Type == AuthNone (no credentials to store).
+// encryptAuth serializes TargetAuth to JSON and encrypts it (ADR-0012).
+// Returns nil when auth.Type == AuthNone.
 func (r *EndpointRepo) encryptAuth(auth endpoint.TargetAuth) ([]byte, error) {
 	if auth.Type == endpoint.AuthNone {
 		return nil, nil
 	}
-
 	plain, err := json.Marshal(auth)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling target auth: %w", err)
 	}
-
 	enc, err := r.encrypter.Encrypt(plain)
 	if err != nil {
 		return nil, fmt.Errorf("encrypting target auth: %w", err)
@@ -336,18 +334,16 @@ func (r *EndpointRepo) encryptAuth(auth endpoint.TargetAuth) ([]byte, error) {
 	return enc, nil
 }
 
-// decryptAuth decrypts and deserializes a TargetAuth from the stored ciphertext.
-// Returns a zero TargetAuth{Type: AuthNone} when authEnc is nil.
+// decryptAuth decrypts and deserializes TargetAuth from stored ciphertext.
+// Returns AuthNone when authEnc is nil.
 func (r *EndpointRepo) decryptAuth(authType endpoint.AuthType, authEnc []byte) (endpoint.TargetAuth, error) {
 	if authType == endpoint.AuthNone || len(authEnc) == 0 {
 		return endpoint.TargetAuth{Type: endpoint.AuthNone}, nil
 	}
-
 	plain, err := r.encrypter.Decrypt(authEnc)
 	if err != nil {
 		return endpoint.TargetAuth{}, fmt.Errorf("decrypting target auth: %w", err)
 	}
-
 	var auth endpoint.TargetAuth
 	if err := json.Unmarshal(plain, &auth); err != nil {
 		return endpoint.TargetAuth{}, fmt.Errorf("unmarshalling target auth: %w", err)

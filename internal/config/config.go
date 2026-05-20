@@ -54,6 +54,12 @@ type DatabaseConfig struct {
 	URL      string `yaml:"url"`
 	MaxConns int    `yaml:"max_conns"`
 	MinConns int    `yaml:"min_conns"`
+
+	// EncryptionKeyHex is a 64-character lowercase hex string (32 bytes) used as the
+	// AES-256-GCM key for encrypting proxy target credentials at rest (ADR-0012).
+	// Must be set via environment variable (e.g. ${DB_ENCRYPTION_KEY}).
+	// Never log or include this value in error messages.
+	EncryptionKeyHex string `yaml:"encryption_key_hex"`
 }
 
 // LoggingConfig controls log verbosity and output format.
@@ -94,6 +100,10 @@ var validTiers = map[string]struct{}{
 
 // hexSHA256Re matches a valid 64-character lowercase SHA-256 hex digest.
 var hexSHA256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
+// hexAES256Re matches a valid 64-character lowercase hex string (32 bytes = AES-256 key).
+// The pattern is identical to hexSHA256Re; a separate variable makes intent explicit.
+var hexAES256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // Load reads the YAML file at path, expands ${VAR} environment placeholders,
 // unmarshals the result into Config, and calls Validate. Returns the validated
@@ -143,6 +153,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Database.URL == "" {
 		errs = append(errs, errors.New("database.url is required"))
+	}
+	if !hexAES256Re.MatchString(c.Database.EncryptionKeyHex) {
+		errs = append(errs, errors.New("database.encryption_key_hex must be a 64-character lowercase hex string (32 bytes for AES-256)"))
 	}
 	if len(c.Models) == 0 {
 		errs = append(errs, errors.New("at least one entry in models is required"))

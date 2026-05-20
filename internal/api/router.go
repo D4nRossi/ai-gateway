@@ -4,13 +4,18 @@
 //
 //	Recover → RequestID → Logging → Auth → RateLimit → Handlers
 //
+// The Admin API is mounted at /admin and uses its own session-based authentication
+// chain (ADR-0011). It does not share middleware with the main API.
+//
 // References:
 //   - SPEC.md §6.1 — endpoint list
 //   - SPEC.md §16 step 15 — router assembly
+//   - ADR-0009 — DB-backed admin plane
 package api
 
 import (
 	"log/slog"
+	"net/http"
 
 	"github.com/go-chi/chi/v5"
 
@@ -34,6 +39,10 @@ type RouterDeps struct {
 	Pool         *pgxpool.Pool
 	ChatDeps     handlers.ChatDeps
 	Logger       *slog.Logger
+	// AdminHandler is the fully assembled Admin API sub-router, mounted at /admin.
+	// It is constructed in main.go and injected here to keep router.go free of
+	// admin-specific dependencies (ADR-0015).
+	AdminHandler http.Handler
 }
 
 // NewRouter builds and returns the fully assembled chi router.
@@ -62,6 +71,14 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 		r.Get("/v1/models", handlers.Models(deps.Config))
 		r.Post("/v1/chat/completions", handlers.Chat(deps.ChatDeps))
 	})
+
+	// ── Admin API ─────────────────────────────────────────────────────────────
+	// The admin sub-router owns its own session-auth middleware chain (ADR-0011).
+	// chi.Mount strips the /admin prefix before passing the request to the sub-router,
+	// so the admin router registers routes under /v1/... not /admin/v1/....
+	if deps.AdminHandler != nil {
+		r.Mount("/admin", deps.AdminHandler)
+	}
 
 	return r
 }

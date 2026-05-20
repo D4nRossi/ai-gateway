@@ -23,6 +23,10 @@ database:
   url: ${DATABASE_URL}
   max_conns: 20
   min_conns: 2
+  # 64-char lowercase hex string (32 bytes) for AES-256-GCM encryption of proxy
+  # target credentials. Generate with: openssl rand -hex 32
+  # Never commit the real value; use the environment variable reference.
+  encryption_key_hex: ${DB_ENCRYPTION_KEY}
 
 logging:
   level: info                       # debug | info | warn | error

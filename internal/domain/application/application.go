@@ -11,7 +11,16 @@
 //   - SPEC.md §5.2 — AppPolicy (Phase 1 equivalent)
 package application
 
-import "time"
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+// ErrNotFound is returned by Repository methods when the requested Application
+// or APIKey does not exist. Callers use errors.Is(err, application.ErrNotFound)
+// to map the condition to an HTTP 404.
+var ErrNotFound = errors.New("application not found")
 
 // TierLevel represents the security tier assigned to an application.
 // Each tier enables a different set of guardrails (SPEC.md §5.3).
@@ -92,38 +101,48 @@ type APIKey struct {
 }
 
 // Repository defines the persistence contract for Application and APIKey entities.
+// All methods accept a context.Context as first argument (CLAUDE.md §5.5).
 // The implementation lives in internal/infra/postgres/applicationrepo.go.
 //
 // References:
+//   - ADR-0009 — DB-backed admin plane
 //   - ADR-0015 — repository interfaces belong in the domain package
 type Repository interface {
 	// Create persists a new Application and returns it with ID and timestamps filled in.
-	Create(app Application) (Application, error)
+	Create(ctx context.Context, app Application) (Application, error)
+
+	// CreateWithKey creates an Application and its initial APIKey in a single transaction.
+	// The caller generates the raw token and passes only the hash; the repo never sees
+	// the plaintext token.
+	CreateWithKey(ctx context.Context, app Application, key APIKey) (Application, APIKey, error)
 
 	// Get retrieves an Application by its surrogate ID.
-	Get(id int64) (Application, error)
+	// Returns ErrNotFound if no row matches.
+	Get(ctx context.Context, id int64) (Application, error)
 
 	// GetByName retrieves an active Application by its unique name.
-	GetByName(name string) (Application, error)
+	// Returns ErrNotFound if no active row matches.
+	GetByName(ctx context.Context, name string) (Application, error)
 
 	// List returns all Applications (active and inactive), ordered by name.
-	List() ([]Application, error)
+	List(ctx context.Context) ([]Application, error)
 
 	// Update persists changes to an existing Application. ID must be set.
-	Update(app Application) (Application, error)
+	// Returns ErrNotFound if no row matches.
+	Update(ctx context.Context, app Application) (Application, error)
 
 	// Delete soft-deletes an Application by setting active=false.
-	Delete(id int64) error
+	// Returns ErrNotFound if no row matches.
+	Delete(ctx context.Context, id int64) error
 
 	// CreateAPIKey persists a new APIKey and returns it with ID filled in.
-	// Replaces any existing active key for the same ApplicationID (ADR-0009).
-	CreateAPIKey(key APIKey) (APIKey, error)
+	CreateAPIKey(ctx context.Context, key APIKey) (APIKey, error)
 
-	// GetAPIKeyByPrefix retrieves the APIKey matching the given prefix.
-	// Used by the auth middleware for bearer token validation.
-	GetAPIKeyByPrefix(prefix string) (APIKey, error)
+	// GetAPIKeyByPrefix retrieves the active APIKey matching the given prefix.
+	// Returns ErrNotFound if no active (non-rotated) row matches.
+	GetAPIKeyByPrefix(ctx context.Context, prefix string) (APIKey, error)
 
-	// RotateAPIKey atomically replaces the current APIKey for an application:
-	// sets rotated_at on the old key and inserts newKey in a single transaction.
-	RotateAPIKey(applicationID int64, newKey APIKey) (APIKey, error)
+	// RotateAPIKey atomically marks the current key as rotated and inserts newKey.
+	// Guarantees zero-downtime swap via a single transaction (ADR-0009).
+	RotateAPIKey(ctx context.Context, applicationID int64, newKey APIKey) (APIKey, error)
 }

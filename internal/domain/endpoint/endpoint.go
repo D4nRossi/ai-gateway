@@ -11,7 +11,15 @@
 //   - ADR-0015 — domain/app/infra layering
 package endpoint
 
-import "time"
+import (
+	"context"
+	"errors"
+	"time"
+)
+
+// ErrNotFound is returned by Repository methods when the requested ProxyEndpoint
+// or Target does not exist. Callers use errors.Is(err, endpoint.ErrNotFound).
+var ErrNotFound = errors.New("endpoint not found")
 
 // LBStrategy names the algorithm used to select a target for each incoming request.
 type LBStrategy string
@@ -135,48 +143,54 @@ type ProxyEndpoint struct {
 }
 
 // Repository defines the persistence contract for ProxyEndpoint, Target, and grant entities.
+// All methods accept a context.Context as first argument (CLAUDE.md §5.5).
 // The implementation lives in internal/infra/postgres/endpointrepo.go.
 //
 // References:
+//   - ADR-0010 — generic HTTP proxy engine
 //   - ADR-0015 — repository interfaces belong in the domain package
 type Repository interface {
 	// Create persists a new ProxyEndpoint (without targets) and returns it with ID set.
-	Create(ep ProxyEndpoint) (ProxyEndpoint, error)
+	Create(ctx context.Context, ep ProxyEndpoint) (ProxyEndpoint, error)
 
-	// Get retrieves a ProxyEndpoint by ID, including its active Targets.
-	Get(id int64) (ProxyEndpoint, error)
+	// Get retrieves a ProxyEndpoint by ID including its active Targets.
+	// Returns ErrNotFound if no row matches.
+	Get(ctx context.Context, id int64) (ProxyEndpoint, error)
 
-	// GetBySlug retrieves an active ProxyEndpoint by slug, including its active Targets.
+	// GetBySlug retrieves an active ProxyEndpoint by slug including its active Targets.
 	// Used by the proxy engine on every request.
-	GetBySlug(slug string) (ProxyEndpoint, error)
+	// Returns ErrNotFound if no active row matches.
+	GetBySlug(ctx context.Context, slug string) (ProxyEndpoint, error)
 
 	// List returns all ProxyEndpoints (active and inactive), without Targets.
-	List() ([]ProxyEndpoint, error)
+	List(ctx context.Context) ([]ProxyEndpoint, error)
 
 	// Update persists changes to an existing ProxyEndpoint. ID must be set.
-	Update(ep ProxyEndpoint) (ProxyEndpoint, error)
+	// Returns ErrNotFound if no row matches.
+	Update(ctx context.Context, ep ProxyEndpoint) (ProxyEndpoint, error)
 
 	// Delete soft-deletes a ProxyEndpoint (active=false).
-	Delete(id int64) error
+	// Returns ErrNotFound if no row matches.
+	Delete(ctx context.Context, id int64) error
 
 	// AddTarget persists a new Target for an endpoint and returns it with ID set.
-	AddTarget(target Target) (Target, error)
+	AddTarget(ctx context.Context, target Target) (Target, error)
 
 	// UpdateTarget persists changes to an existing Target. ID must be set.
-	UpdateTarget(target Target) (Target, error)
+	UpdateTarget(ctx context.Context, target Target) (Target, error)
 
 	// RemoveTarget soft-deletes a Target (active=false).
-	RemoveTarget(targetID int64) error
+	RemoveTarget(ctx context.Context, targetID int64) error
 
-	// Grant allows an application to call a proxy endpoint.
-	Grant(applicationID, endpointID int64) error
+	// Grant allows an application to call a proxy endpoint. Idempotent.
+	Grant(ctx context.Context, applicationID, endpointID int64) error
 
 	// Revoke removes an application's access to a proxy endpoint.
-	Revoke(applicationID, endpointID int64) error
+	Revoke(ctx context.Context, applicationID, endpointID int64) error
 
 	// HasGrant reports whether the application has been granted access to the endpoint.
-	HasGrant(applicationID, endpointID int64) (bool, error)
+	HasGrant(ctx context.Context, applicationID, endpointID int64) (bool, error)
 
-	// ListGrantedApplicationIDs returns all application IDs that have access to an endpoint.
-	ListGrantedApplicationIDs(endpointID int64) ([]int64, error)
+	// ListGrantedApplicationIDs returns all application IDs granted access to an endpoint.
+	ListGrantedApplicationIDs(ctx context.Context, endpointID int64) ([]int64, error)
 }

@@ -1,8 +1,6 @@
 // Package postgres provides pgx v5 implementations of the domain repository interfaces.
 // Each repository wraps a *pgxpool.Pool and executes parameterized SQL queries.
-//
-// All methods accept a context.Context as the first argument and propagate cancellation
-// to the database driver. No business logic lives here — only persistence.
+// No business logic lives here — only persistence.
 //
 // References:
 //   - ADR-0004 — pgx direct (no ORM)
@@ -23,6 +21,9 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/domain/application"
 )
 
+// Compile-time assertion: ApplicationRepo must satisfy application.Repository.
+var _ application.Repository = (*ApplicationRepo)(nil)
+
 // ApplicationRepo is the pgx implementation of application.Repository.
 type ApplicationRepo struct {
 	pool *pgxpool.Pool
@@ -33,11 +34,8 @@ func NewApplicationRepo(pool *pgxpool.Pool) *ApplicationRepo {
 	return &ApplicationRepo{pool: pool}
 }
 
-// Create inserts a new Application row and returns the persisted entity with
-// ID, CreatedAt, and UpdatedAt filled in by the database.
-//
-// References:
-//   - ADR-0009 — application lifecycle
+// Create inserts a new Application row and returns the entity with ID, CreatedAt,
+// and UpdatedAt filled in by the database.
 func (r *ApplicationRepo) Create(ctx context.Context, app application.Application) (application.Application, error) {
 	const q = `
 		INSERT INTO applications
@@ -56,6 +54,51 @@ func (r *ApplicationRepo) Create(ctx context.Context, app application.Applicatio
 	return app, nil
 }
 
+// CreateWithKey creates an Application and its initial APIKey in a single transaction,
+// ensuring the app is never accessible without a key (ADR-0009).
+func (r *ApplicationRepo) CreateWithKey(ctx context.Context, app application.Application, key application.APIKey) (application.Application, application.APIKey, error) {
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return application.Application{}, application.APIKey{}, fmt.Errorf("beginning create-with-key transaction: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	const qApp = `
+		INSERT INTO applications
+		    (name, tier, allowed_models, streaming_allowed, max_rpm, max_tpm, monthly_budget_brl, active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, created_at, updated_at`
+
+	rowApp := tx.QueryRow(ctx, qApp,
+		app.Name, string(app.Tier), app.AllowedModels,
+		app.StreamingAllowed, app.MaxRPM, app.MaxTPM,
+		app.MonthlyBudgetBRL, app.Active,
+	)
+	if err = rowApp.Scan(&app.ID, &app.CreatedAt, &app.UpdatedAt); err != nil {
+		return application.Application{}, application.APIKey{}, fmt.Errorf("inserting application %q: %w", app.Name, err)
+	}
+
+	key.ApplicationID = app.ID
+	const qKey = `
+		INSERT INTO api_keys (application_id, key_prefix, key_hash)
+		VALUES ($1, $2, $3)
+		RETURNING id, created_at`
+
+	rowKey := tx.QueryRow(ctx, qKey, key.ApplicationID, key.KeyPrefix, key.KeyHash)
+	if err = rowKey.Scan(&key.ID, &key.CreatedAt); err != nil {
+		return application.Application{}, application.APIKey{}, fmt.Errorf("inserting api key for app %q: %w", app.Name, err)
+	}
+
+	if err = tx.Commit(ctx); err != nil {
+		return application.Application{}, application.APIKey{}, fmt.Errorf("committing create-with-key: %w", err)
+	}
+	return app, key, nil
+}
+
 // Get retrieves an Application by surrogate ID.
 func (r *ApplicationRepo) Get(ctx context.Context, id int64) (application.Application, error) {
 	const q = `
@@ -68,14 +111,14 @@ func (r *ApplicationRepo) Get(ctx context.Context, id int64) (application.Applic
 	app, err := scanApplication(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return application.Application{}, fmt.Errorf("application id=%d not found: %w", id, ErrNotFound)
+			return application.Application{}, fmt.Errorf("application id=%d: %w", id, application.ErrNotFound)
 		}
 		return application.Application{}, fmt.Errorf("getting application id=%d: %w", id, err)
 	}
 	return app, nil
 }
 
-// GetByName retrieves an Application by its unique name. Only active rows are returned.
+// GetByName retrieves an active Application by its unique name.
 func (r *ApplicationRepo) GetByName(ctx context.Context, name string) (application.Application, error) {
 	const q = `
 		SELECT id, name, tier, allowed_models, streaming_allowed,
@@ -87,14 +130,14 @@ func (r *ApplicationRepo) GetByName(ctx context.Context, name string) (applicati
 	app, err := scanApplication(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return application.Application{}, fmt.Errorf("application %q not found: %w", name, ErrNotFound)
+			return application.Application{}, fmt.Errorf("application %q: %w", name, application.ErrNotFound)
 		}
 		return application.Application{}, fmt.Errorf("getting application %q: %w", name, err)
 	}
 	return app, nil
 }
 
-// List returns all Applications ordered by name. Includes both active and inactive.
+// List returns all Applications ordered by name, including inactive ones.
 func (r *ApplicationRepo) List(ctx context.Context) ([]application.Application, error) {
 	const q = `
 		SELECT id, name, tier, allowed_models, streaming_allowed,
@@ -139,7 +182,7 @@ func (r *ApplicationRepo) Update(ctx context.Context, app application.Applicatio
 	)
 	if err := row.Scan(&app.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return application.Application{}, fmt.Errorf("application id=%d not found: %w", app.ID, ErrNotFound)
+			return application.Application{}, fmt.Errorf("application id=%d: %w", app.ID, application.ErrNotFound)
 		}
 		return application.Application{}, fmt.Errorf("updating application id=%d: %w", app.ID, err)
 	}
@@ -155,16 +198,12 @@ func (r *ApplicationRepo) Delete(ctx context.Context, id int64) error {
 		return fmt.Errorf("deleting application id=%d: %w", id, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("application id=%d not found: %w", id, ErrNotFound)
+		return fmt.Errorf("application id=%d: %w", id, application.ErrNotFound)
 	}
 	return nil
 }
 
 // CreateAPIKey inserts a new APIKey and returns it with ID set.
-//
-// Reasoning: any previous key for the same application_id must be handled by RotateAPIKey
-// (which sets rotated_at on the old key in the same transaction). This method does not
-// enforce uniqueness by itself — the DB UNIQUE constraint on application_id does.
 func (r *ApplicationRepo) CreateAPIKey(ctx context.Context, key application.APIKey) (application.APIKey, error) {
 	const q = `
 		INSERT INTO api_keys (application_id, key_prefix, key_hash)
@@ -178,8 +217,7 @@ func (r *ApplicationRepo) CreateAPIKey(ctx context.Context, key application.APIK
 	return key, nil
 }
 
-// GetAPIKeyByPrefix retrieves the APIKey for the given prefix.
-// Used by the auth middleware; only returns keys where rotated_at IS NULL (active key).
+// GetAPIKeyByPrefix retrieves the active (non-rotated) APIKey for the given prefix.
 func (r *ApplicationRepo) GetAPIKeyByPrefix(ctx context.Context, prefix string) (application.APIKey, error) {
 	const q = `
 		SELECT id, application_id, key_prefix, key_hash, created_at, rotated_at
@@ -190,18 +228,15 @@ func (r *ApplicationRepo) GetAPIKeyByPrefix(ctx context.Context, prefix string) 
 	key, err := scanAPIKey(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return application.APIKey{}, fmt.Errorf("api key prefix %q not found: %w", prefix, ErrNotFound)
+			return application.APIKey{}, fmt.Errorf("api key prefix %q: %w", prefix, application.ErrNotFound)
 		}
 		return application.APIKey{}, fmt.Errorf("getting api key for prefix %q: %w", prefix, err)
 	}
 	return key, nil
 }
 
-// RotateAPIKey replaces the active key for an application in a single transaction:
-// sets rotated_at on the existing key and inserts newKey.
-//
-// Reasoning: atomic swap ensures zero-downtime key rotation — there is no window
-// where the application has no valid key (ADR-0009 response C).
+// RotateAPIKey atomically marks the current key as rotated and inserts newKey.
+// Zero-downtime: the new key is active before the old is invalidated, within one transaction.
 func (r *ApplicationRepo) RotateAPIKey(ctx context.Context, applicationID int64, newKey application.APIKey) (application.APIKey, error) {
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {

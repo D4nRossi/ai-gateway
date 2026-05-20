@@ -11,6 +11,9 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/domain/admin"
 )
 
+// Compile-time assertion: AdminRepo must satisfy admin.Repository.
+var _ admin.Repository = (*AdminRepo)(nil)
+
 // AdminRepo is the pgx implementation of admin.Repository.
 type AdminRepo struct {
 	pool *pgxpool.Pool
@@ -47,7 +50,7 @@ func (r *AdminRepo) GetUser(ctx context.Context, id int64) (admin.AdminUser, err
 	user, err := scanAdminUser(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return admin.AdminUser{}, fmt.Errorf("admin user id=%d not found: %w", id, ErrNotFound)
+			return admin.AdminUser{}, fmt.Errorf("admin user id=%d: %w", id, admin.ErrNotFound)
 		}
 		return admin.AdminUser{}, fmt.Errorf("getting admin user id=%d: %w", id, err)
 	}
@@ -55,7 +58,6 @@ func (r *AdminRepo) GetUser(ctx context.Context, id int64) (admin.AdminUser, err
 }
 
 // GetUserByUsername retrieves an active AdminUser by username.
-// Used during login to locate the user record before bcrypt verification.
 func (r *AdminRepo) GetUserByUsername(ctx context.Context, username string) (admin.AdminUser, error) {
 	const q = `
 		SELECT id, username, password_hash, role, active, created_at, updated_at
@@ -65,7 +67,7 @@ func (r *AdminRepo) GetUserByUsername(ctx context.Context, username string) (adm
 	user, err := scanAdminUser(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return admin.AdminUser{}, fmt.Errorf("admin user %q not found: %w", username, ErrNotFound)
+			return admin.AdminUser{}, fmt.Errorf("admin user %q: %w", username, admin.ErrNotFound)
 		}
 		return admin.AdminUser{}, fmt.Errorf("getting admin user %q: %w", username, err)
 	}
@@ -85,7 +87,7 @@ func (r *AdminRepo) UpdateUser(ctx context.Context, user admin.AdminUser) (admin
 	)
 	if err := row.Scan(&user.UpdatedAt); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return admin.AdminUser{}, fmt.Errorf("admin user id=%d not found: %w", user.ID, ErrNotFound)
+			return admin.AdminUser{}, fmt.Errorf("admin user id=%d: %w", user.ID, admin.ErrNotFound)
 		}
 		return admin.AdminUser{}, fmt.Errorf("updating admin user id=%d: %w", user.ID, err)
 	}
@@ -140,7 +142,6 @@ func (r *AdminRepo) CreateSession(ctx context.Context, session admin.AdminSessio
 }
 
 // GetSessionByTokenHash retrieves an active (not revoked, not expired) session by token hash.
-// This is on the critical path of every admin request.
 func (r *AdminRepo) GetSessionByTokenHash(ctx context.Context, tokenHash string) (admin.AdminSession, error) {
 	const q = `
 		SELECT id, admin_user_id, token_hash, expires_at, created_at, revoked_at
@@ -153,7 +154,7 @@ func (r *AdminRepo) GetSessionByTokenHash(ctx context.Context, tokenHash string)
 	session, err := scanAdminSession(row)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return admin.AdminSession{}, fmt.Errorf("session not found or expired: %w", ErrNotFound)
+			return admin.AdminSession{}, fmt.Errorf("session not found or expired: %w", admin.ErrNotFound)
 		}
 		return admin.AdminSession{}, fmt.Errorf("getting admin session: %w", err)
 	}
@@ -169,13 +170,12 @@ func (r *AdminRepo) RevokeSession(ctx context.Context, id int64) error {
 		return fmt.Errorf("revoking session id=%d: %w", id, err)
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("session id=%d not found or already revoked: %w", id, ErrNotFound)
+		return fmt.Errorf("session id=%d: %w", id, admin.ErrNotFound)
 	}
 	return nil
 }
 
 // RevokeAllUserSessions revokes every active session for a given user.
-// Called when deactivating a user or forcing a password reset.
 func (r *AdminRepo) RevokeAllUserSessions(ctx context.Context, userID int64) error {
 	const q = `
 		UPDATE admin_sessions SET revoked_at = NOW()
@@ -187,8 +187,7 @@ func (r *AdminRepo) RevokeAllUserSessions(ctx context.Context, userID int64) err
 	return nil
 }
 
-// DeleteExpiredSessions removes rows that are expired or revoked to keep the table bounded.
-// Safe to run at boot and periodically via a background goroutine.
+// DeleteExpiredSessions removes rows that are expired or revoked.
 func (r *AdminRepo) DeleteExpiredSessions(ctx context.Context) error {
 	const q = `DELETE FROM admin_sessions WHERE expires_at < NOW() OR revoked_at IS NOT NULL`
 
