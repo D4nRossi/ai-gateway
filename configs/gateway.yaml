@@ -51,20 +51,22 @@ models:
     cost_output_per_1k_brl: 0.0023  # ~$0.40/1M output at R$5.75/USD — adjust for prod
 
 applications:
-  # ── Placeholder apps — substitua pelos seus times/aplicações reais ──────────
-  - name: AppLeve
-    key_prefix: gwk_leve
-    key_hash: "504758522b63dcd54a9bae3e029d9b0bd4de45934857f04ccd3c1006f088fae4"
+  # ── Generic test applications — one per tier ─────────────────────────────────
+  # Token: gwk_basic_k9mxqr7tz2wn3vfp
+  - name: AppBasico
+    key_prefix: gwk_basic
+    key_hash: "5266d01c59613688cfd4c3fdaac52054782e4e53bc33e9f2c832363c141c8784"
     tier: tier_1
     allowed_models: [gpt-4.1-nano]
-    streaming_allowed: true
+    streaming_allowed: false
     max_rpm: 600
     max_tpm: 500000
     monthly_budget_brl: 100.00
 
-  - name: AppMedio
-    key_prefix: gwk_med
-    key_hash: "f646d29a7cd112f877555c7f41676a3b3ebd234304cdc379f28821b3af118195"
+  # Token: gwk_pro_n4vwlp8fy6hkjcqm
+  - name: AppPro
+    key_prefix: gwk_pro
+    key_hash: "5857b6b807148a2b7713e964567196b7f83c2afdd7b431b96b618897809d3bb3"
     tier: tier_2
     allowed_models: [gpt-4.1-mini, gpt-4.1-nano]
     streaming_allowed: true
@@ -72,9 +74,10 @@ applications:
     max_tpm: 250000
     monthly_budget_brl: 500.00
 
-  - name: AppSensivel
-    key_prefix: gwk_sens
-    key_hash: "16c642ab8d7640e709b129110b1df2d7d8bff6541ede8ef17ec264c3a0282795"
+  # Token: gwk_vault_j3hsbn2cq1xdtzer
+  - name: AppVault
+    key_prefix: gwk_vault
+    key_hash: "b7e91e3e1359c1505184cfb8e049814a9998c23b6b38ef6c40bd88132376df84"
     tier: tier_3
     allowed_models: [gpt-4.1-mini]
     streaming_allowed: false
