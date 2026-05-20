@@ -1,0 +1,14 @@
+node_modules
+*.log
+.DS_Store
+.vite
+.idea
+.vscode
+*.tsbuildinfo
+
+# Ignore all build artifacts in dist/ EXCEPT the .gitkeep placeholder.
+# The placeholder is required so //go:embed all:dist (web/embed.go) does not
+# fail to compile on a fresh checkout. Run `npm run build` to populate dist
+# with the real bundle before the final `go build`.
+dist/*
+!dist/.gitkeep

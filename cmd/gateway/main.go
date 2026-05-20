@@ -59,6 +59,7 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/security/postvalidation"
 	"github.com/D4nRossi/ai-gateway/internal/security/promptshield"
 	"github.com/D4nRossi/ai-gateway/internal/usage"
+	"github.com/D4nRossi/ai-gateway/web"
 )
 
 func main() {
@@ -226,6 +227,7 @@ func run() error {
 		AdminHandler: adminRouter,
 		ProxyAuth:    proxyAuth,
 		ProxyHandler: proxyHandler,
+		WebHandler:   web.Handler(),
 		ChatDeps: handlers.ChatDeps{
 			Provider:     prov,
 			Config:       cfg,

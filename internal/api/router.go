@@ -49,6 +49,9 @@ type RouterDeps struct {
 	// ProxyHandler is the generic-proxy http.Handler mounted under /v1/proxy.
 	// Constructed in main.go from the proxy package.
 	ProxyHandler http.Handler
+	// WebHandler serves the embedded admin SPA. Mounted at /ui.
+	// Constructed in main.go from the web package (ADR-0014).
+	WebHandler http.Handler
 }
 
 // NewRouter builds and returns the fully assembled chi router.
@@ -95,6 +98,17 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 			r.Use(deps.ProxyAuth)
 			r.Handle("/v1/proxy/{slug}", deps.ProxyHandler)
 			r.Handle("/v1/proxy/{slug}/*", deps.ProxyHandler)
+		})
+	}
+
+	// ── Admin SPA ─────────────────────────────────────────────────────────────
+	// chi.Mount strips the /ui prefix before invoking WebHandler, which serves
+	// the embedded Vite build. Visiting / redirects to /ui/ so the landing page
+	// is the admin console (ADR-0014).
+	if deps.WebHandler != nil {
+		r.Mount("/ui", deps.WebHandler)
+		r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+			http.Redirect(w, req, "/ui/", http.StatusFound)
 		})
 	}
 

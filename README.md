@@ -22,12 +22,46 @@ Aplicação interna
 
 ## Pré-requisitos
 
-| Ferramenta | Versão mínima |
-|---|---|
-| Go | 1.25+ |
-| Docker | 24+ |
-| Docker Compose | v2 |
-| PostgreSQL | 17 (via Docker) |
+| Ferramenta | Versão mínima | Necessária para |
+|---|---|---|
+| Go | 1.25+ | backend |
+| Docker | 24+ | Postgres local |
+| Docker Compose | v2 | Postgres local |
+| PostgreSQL | 17 (via Docker) | banco |
+| Node.js | 20+ | console web (`web/`) |
+| pnpm | 9+ (via `corepack enable pnpm`) | console web |
+
+## Console web (admin UI)
+
+O console React+Vite vive em `web/` e é embedado no binário Go via `//go:embed`
+(ADR-0014). Para desenvolvedores backend, o fluxo é:
+
+```bash
+# 1. Ativar pnpm (Node 20 já traz corepack)
+corepack enable pnpm
+
+# 2. Instalar dependências e gerar o bundle
+cd web
+pnpm install
+pnpm build                       # gera web/dist/
+
+# 3. Voltar para a raiz e (re)buildar o Go
+cd ..
+go build ./cmd/gateway
+
+# 4. Subir o gateway — UI fica em http://localhost:8080/ui
+PROVIDER=mock ./gateway
+```
+
+Modo de desenvolvimento com hot reload (rode em terminal separado):
+
+```bash
+cd web && pnpm dev               # Vite em http://localhost:5173
+                                 # proxia /admin e /v1 para o Go em :8080
+```
+
+> Para criar o primeiro usuário admin no banco, use a CLI ou um `INSERT` direto
+> (a senha precisa ser um hash bcrypt cost=12; veja `docs/admin-setup.md`).
 
 ## Início rápido (modo mock — sem Azure)
 

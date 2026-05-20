@@ -1,0 +1,103 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design tokens — dark-first.
+ * Light tokens kept for completeness but the html element pins `class="dark"`
+ * in index.html. Switching themes later is a one-line toggle on document.documentElement.
+ *
+ * Reasoning: HSL channels (without the `hsl()` wrapper) let Tailwind's color
+ * utilities multiply alpha via `bg-background/80`. Hex values would block that.
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+    --primary: 263 70% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 4.8% 95.9%;
+    --secondary-foreground: 240 5.9% 10%;
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 71% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 100%;
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 263 70% 60%;
+    --radius: 0.625rem;
+  }
+
+  .dark {
+    /* Background system — zinc-950 family for the canvas; cards slightly lighter. */
+    --background: 240 10% 3.9%;     /* zinc-950 */
+    --foreground: 0 0% 98%;          /* zinc-50 */
+    --card: 240 6% 8%;               /* between zinc-950 and zinc-900 */
+    --card-foreground: 0 0% 98%;
+    --popover: 240 6% 8%;
+    --popover-foreground: 0 0% 98%;
+
+    /* Accent — violet-500 with white text. */
+    --primary: 263 70% 60%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Surfaces — zinc-900 for inputs/secondary. */
+    --secondary: 240 4% 14%;
+    --secondary-foreground: 0 0% 96%;
+    --muted: 240 4% 14%;
+    --muted-foreground: 240 5% 65%;
+    --accent: 240 4% 14%;
+    --accent-foreground: 0 0% 96%;
+
+    --destructive: 0 72% 55%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 142 60% 45%;
+    --success-foreground: 0 0% 100%;
+    --warning: 38 92% 50%;
+    --warning-foreground: 0 0% 0%;
+
+    --border: 240 4% 16%;
+    --input: 240 4% 16%;
+    --ring: 263 70% 60%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  ::selection {
+    background-color: hsl(var(--primary) / 0.4);
+  }
+  /* Subtle ambient noise gradient on the body for premium feel */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    background:
+      radial-gradient(circle at 0% 0%, hsl(263 70% 50% / 0.08), transparent 50%),
+      radial-gradient(circle at 100% 100%, hsl(190 80% 50% / 0.05), transparent 50%);
+  }
+  #root {
+    position: relative;
+    z-index: 1;
+  }
+}
