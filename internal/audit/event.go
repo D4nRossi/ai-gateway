@@ -1,0 +1,43 @@
+// Package audit defines AuditEvent types and the async writer that persists
+// policy-decision records to the audit_events table.
+//
+// References:
+//   - SPEC.md §5.4 — AuditEvent struct and EventType constants
+//   - SPEC.md §9.1 steps 13 — emit audit event
+package audit
+
+import "time"
+
+// AuditEvent captures a security or policy decision made during request processing.
+//
+// References:
+//   - SPEC.md §5.4
+type AuditEvent struct {
+	RequestID       string
+	ApplicationName string
+	EventType       string         // one of the Event* constants below
+	Severity        string         // "info" | "warn" | "error"
+	Metadata        map[string]any // serialised as JSONB; never contains prompt content
+	CreatedAt       time.Time
+}
+
+// Event type constants for AuditEvent.EventType.
+//
+// References:
+//   - SPEC.md §5.4
+const (
+	EventAuthFailed         = "auth_failed"
+	EventModelBlocked       = "model_blocked"
+	EventPIIMasked          = "pii_masked"
+	EventInjectionDetected  = "injection_detected"
+	EventPromptShieldBlock  = "prompt_shield_block"
+	EventContentSafetyBlock = "content_safety_block"
+	EventRateLimited        = "rate_limited"
+	EventBudgetExceeded     = "budget_exceeded"
+	EventProviderError      = "provider_error"
+	EventStreamCancelled    = "stream_cancelled"
+	// EventStreamNoUsage is emitted when a streaming response completes without
+	// usage data (consumer did not set stream_options.include_usage or Azure
+	// omitted the usage chunk). References: SPEC.md §15.4.
+	EventStreamNoUsage = "stream_no_usage"
+)
