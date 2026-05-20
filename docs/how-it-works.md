@@ -2,6 +2,8 @@
 
 Este documento descreve a arquitetura interna, o fluxo de uma requisição e o papel de cada pacote Go.
 
+> **Leitura relacionada:** [Suite de testes](testing.md) · [Roadmap Phase 2](roadmap.md) · [Desenvolvimento local](local-development.md)
+
 ---
 
 ## Mapa de pacotes

@@ -64,8 +64,8 @@ Edite o arquivo para sua aplicação real. Pontos de atenção:
 
 ```yaml
 azure_openai:
-  api_version: "2024-10-21"   # confirmar versão disponível na sua região
-                               # https://learn.microsoft.com/en-us/azure/ai-services/openai/api-version-deprecation
+  api_version: "2025-01-01-preview"   # versão corrente em homologação
+                                       # https://learn.microsoft.com/en-us/azure/ai-services/openai/api-version-deprecation
 
 models:
   - public_name: gpt-4.1-mini

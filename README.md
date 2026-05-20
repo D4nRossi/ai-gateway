@@ -32,46 +32,58 @@ Aplicação interna
 ## Início rápido (modo mock — sem Azure)
 
 ```bash
-# 1. Clonar e entrar no diretório
-cd ai-gateway
-
-# 2. Subir o banco
+# 1. Subir o banco
 docker compose up -d postgres
 
-# 3. Gerar um hash para o token de teste
-echo -n "gwk_leve_meutokendeteste123" | sha256sum | cut -d' ' -f1
-# → cole o resultado em configs/gateway.yaml → applications[0].key_hash
+# 2. Copiar e configurar variáveis
+cp .env.example .env
+# edite .env se necessário (DATABASE_URL já preenchida para dev local)
 
-# 4. Exportar variável mínima
-export DATABASE_URL="postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable"
+# 3. Carregar variáveis no shell
+set -a && source .env && set +a
 
-# 5. Rodar com provider mock (sem Azure)
+# 4. Rodar com provider mock (sem precisar de credenciais Azure)
 PROVIDER=mock go run ./cmd/gateway
 
-# 6. Testar
+# 5. Testar (em outro terminal)
 curl -s http://localhost:8080/healthz
+
 curl -s -X POST http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer gwk_leve_meutokendeteste123" \
+  -H "Authorization: Bearer gwk_basic_k9mxqr7tz2wn3vfp" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4.1-nano","messages":[{"role":"user","content":"Olá!"}]}'
 ```
+
+## Aplicações de teste disponíveis
+
+Três aplicações genéricas pré-configuradas em `configs/gateway.yaml`:
+
+| App | Token (dev) | Tier | Modelos | Streaming | RPM |
+|---|---|---|---|---|---|
+| AppBasico | `gwk_basic_k9mxqr7tz2wn3vfp` | tier_1 | gpt-4.1-nano | não | 600 |
+| AppPro | `gwk_pro_n4vwlp8fy6hkjcqm` | tier_2 | mini + nano | sim | 300 |
+| AppVault | `gwk_vault_j3hsbn2cq1xdtzer` | tier_3 | gpt-4.1-mini | não | 60 |
+
+> **Atenção:** esses tokens são de desenvolvimento/homologação. Para produção, gere tokens novos com `openssl rand -hex 24`.
 
 ## Documentação completa
 
 | Documento | Conteúdo |
 |---|---|
 | [Como funciona](docs/how-it-works.md) | Arquitetura, fluxo de request, mapa de pacotes |
-| [Desenvolvimento local](docs/local-development.md) | Setup detalhado, geração de tokens, testes manuais |
-| [Deploy em produção](docs/production-deploy.md) | Docker, variáveis de ambiente, segurança, Azure setup |
-| [Manutenção](docs/maintenance.md) | Adicionar apps, rotacionar chaves, migrations, monitoramento |
+| [Desenvolvimento local](docs/local-development.md) | Setup detalhado, tokens, testes manuais de cada endpoint |
+| [Suite de testes](docs/testing.md) | Como rodar testes, benchmarks, o que cada arquivo cobre |
+| [Deploy em produção](docs/production-deploy.md) | Docker, variáveis, segurança, checklist Azure |
+| [Manutenção](docs/maintenance.md) | Adicionar apps, rotacionar chaves, migrations, SQL de monitoramento |
+| [Roadmap](docs/roadmap.md) | O que está feito, o que vem na Phase 2 |
 | [ADRs](docs/adrs/) | Decisões arquiteturais registradas (ADR-0001 a ADR-0008) |
 
 ## Endpoints
 
 ```
 GET  /healthz                  → 200 sempre (liveness)
-GET  /readyz                   → 200 se DB ok, 503 caso contrário (readiness)
-GET  /v1/models                → lista de modelos da aplicação autenticada
+GET  /readyz                   → 200 se DB + Azure ok, 503 caso contrário (readiness)
+GET  /v1/models                → modelos da aplicação autenticada
 POST /v1/chat/completions      → chat (stream e non-stream, compatível OpenAI)
 ```
 
@@ -79,12 +91,12 @@ POST /v1/chat/completions      → chat (stream e non-stream, compatível OpenAI
 
 | Variável | Obrigatória | Descrição |
 |---|---|---|
-| `DATABASE_URL` | Sim | URL PostgreSQL |
-| `AZURE_OPENAI_ENDPOINT` | Sim* | Endpoint Azure OpenAI |
-| `AZURE_OPENAI_API_KEY` | Sim* | Chave Azure OpenAI |
+| `DATABASE_URL` | Sim | `postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable` |
+| `AZURE_OPENAI_ENDPOINT` | Sim* | Endpoint Azure OpenAI (ex: `https://nome.cognitiveservices.azure.com`) |
+| `AZURE_OPENAI_API_KEY` | Sim* | Chave da API Azure OpenAI |
 | `AZURE_CS_ENDPOINT` | Não | Endpoint Content Safety (Tier 3) |
 | `AZURE_CS_API_KEY` | Não | Chave Content Safety (Tier 3) |
-| `PROVIDER` | Não | `azure` (padrão) ou `mock` |
+| `PROVIDER` | Não | `azure` (padrão) ou `mock` (sem Azure) |
 | `CONFIG_PATH` | Não | Caminho do YAML (padrão: `configs/gateway.yaml`) |
 
 *Não necessárias com `PROVIDER=mock`.
@@ -92,24 +104,26 @@ POST /v1/chat/completions      → chat (stream e non-stream, compatível OpenAI
 ## Comandos úteis
 
 ```bash
-# Subir infra
-docker compose up -d postgres
+# Infra
+docker compose up -d postgres       # sobe só o banco
+docker compose up                   # sobe banco + gateway em container
 
-# Rodar localmente
-go run ./cmd/gateway
+# Desenvolvimento
+PROVIDER=mock go run ./cmd/gateway  # rodar sem Azure
+go test ./...                       # rodar toda a suite de testes
+go test -race ./...                 # rodar com detector de race conditions
+go test -bench=. -benchmem ./...    # rodar benchmarks com memória
 
-# Build binário estático
+# Build
 CGO_ENABLED=0 GOOS=linux go build -o bin/ai-gateway ./cmd/gateway
-
-# Build imagem Docker
 docker build -t ai-gateway:dev .
 
-# Subir tudo (inclui gateway em container)
-docker compose up
+# Gerar token + hash para nova aplicação
+TOKEN="gwk_novaapp_$(openssl rand -hex 24)"
+echo "Token (distribuir): $TOKEN"
+echo "Hash (gateway.yaml): $(echo -n "$TOKEN" | sha256sum | cut -d' ' -f1)"
 
-# Migration manual (rollback 1 passo)
+# Migration manual
+migrate -database "$DATABASE_URL" -path migrations up
 migrate -database "$DATABASE_URL" -path migrations down 1
-
-# Gerar hash de um bearer token
-echo -n "gwk_appname_segredoaqui" | sha256sum | cut -d' ' -f1
 ```
