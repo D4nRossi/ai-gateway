@@ -31,6 +31,10 @@ const maxBodyBytes = 1 << 20
 // ChatDeps groups all dependencies for the Chat handler.
 // Async writers and budget components are expressed as interfaces to allow
 // unit testing without a live database connection (CLAUDE.md §14).
+//
+// All fields must be populated at bootstrap (cmd/gateway/main.go). No field
+// should be constructed inside the handler — that would violate the DI
+// principle and, for expensive objects, pay allocation on every request.
 type ChatDeps struct {
 	Provider     providers.Provider
 	Config       *config.Config
@@ -38,9 +42,20 @@ type ChatDeps struct {
 	UsageWriter  usage.Emitter
 	BudgetCheck  budget.PreChecker
 	BudgetCount  budget.Recorder
-	ShieldClient *promptshield.Client    // nil if azure_content_safety not configured
+	ShieldClient *promptshield.Client     // nil if azure_content_safety not configured
 	Validator    *postvalidation.Validator
 	Logger       *slog.Logger
+
+	// Maskers holds one pre-built Masker per tier key ("tier_1", "tier_2", "tier_3").
+	// Masker instances are safe for concurrent use; detector regex patterns are
+	// compiled once at package init (package-level var in masking/detectors.go),
+	// not per NewMasker call. Injecting here avoids per-request slice + struct
+	// allocation and keeps construction out of the hot path (CLAUDE.md §14).
+	//
+	// References:
+	//   - SPEC.md §10.2 — tier-specific detector selection
+	//   - CLAUDE.md §14 — testability: dependencies injected, not constructed inline
+	Maskers map[string]*masking.Masker
 }
 
 // Chat handles POST /v1/chat/completions (streaming and non-streaming).
@@ -94,7 +109,7 @@ func Chat(deps ChatDeps) http.HandlerFunc {
 		pipe := tiers.PipelineFor(policy.Tier)
 
 		if pipe.RunLocalMasking {
-			masker := masking.NewMasker(policy.Tier)
+			masker := deps.Maskers[policy.Tier]
 			totalCats := map[string]int{}
 			totalReplace := 0
 			for i, msg := range req.Messages {

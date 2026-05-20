@@ -48,6 +48,7 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/providers/azureopenai"
 	"github.com/D4nRossi/ai-gateway/internal/providers/mock"
 	"github.com/D4nRossi/ai-gateway/internal/ratelimit"
+	"github.com/D4nRossi/ai-gateway/internal/security/masking"
 	"github.com/D4nRossi/ai-gateway/internal/security/postvalidation"
 	"github.com/D4nRossi/ai-gateway/internal/security/promptshield"
 	"github.com/D4nRossi/ai-gateway/internal/usage"
@@ -110,6 +111,18 @@ func run() error {
 
 	// ── 6. PolicyStore ────────────────────────────────────────────────────────
 	policyStore := auth.NewPolicyStore(cfg.Applications)
+
+	// ── 6a. Pre-build PII maskers ─────────────────────────────────────────────
+	// One Masker per tier, constructed here so regex patterns are compiled at
+	// bootstrap. Detector *regexp.Regexp vars are package-level (compiled once
+	// at package init); pre-building Masker instances avoids per-request slice
+	// and struct allocation on the hot path. Safe for concurrent use.
+	// References: SPEC.md §10.2; CLAUDE.md §14.
+	maskers := map[string]*masking.Masker{
+		"tier_1": masking.NewMasker("tier_1"),
+		"tier_2": masking.NewMasker("tier_2"),
+		"tier_3": masking.NewMasker("tier_3"),
+	}
 
 	// ── 7. Provider ───────────────────────────────────────────────────────────
 	var prov providers.Provider
@@ -176,6 +189,7 @@ func run() error {
 			ShieldClient: shieldClient,
 			Validator:    postvalidation.New(),
 			Logger:       logger,
+			Maskers:      maskers,
 		},
 	}
 
