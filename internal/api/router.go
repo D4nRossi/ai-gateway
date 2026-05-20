@@ -32,17 +32,23 @@ import (
 // Rate limiter and audit writer are expressed as interfaces to allow
 // unit testing without live infrastructure (CLAUDE.md §14).
 type RouterDeps struct {
-	Config       *config.Config
-	PolicyStore  auth.PolicyStore
-	RateLimiter  ratelimit.Limiter
-	AuditWriter  audit.Emitter
-	Pool         *pgxpool.Pool
-	ChatDeps     handlers.ChatDeps
-	Logger       *slog.Logger
+	Config      *config.Config
+	PolicyStore auth.PolicyStore
+	RateLimiter ratelimit.Limiter
+	AuditWriter audit.Emitter
+	Pool        *pgxpool.Pool
+	ChatDeps    handlers.ChatDeps
+	Logger      *slog.Logger
 	// AdminHandler is the fully assembled Admin API sub-router, mounted at /admin.
 	// It is constructed in main.go and injected here to keep router.go free of
 	// admin-specific dependencies (ADR-0015).
 	AdminHandler http.Handler
+	// ProxyAuth is the DB-backed Bearer-token middleware for the generic proxy
+	// plane. Constructed in main.go from the proxy package.
+	ProxyAuth func(http.Handler) http.Handler
+	// ProxyHandler is the generic-proxy http.Handler mounted under /v1/proxy.
+	// Constructed in main.go from the proxy package.
+	ProxyHandler http.Handler
 }
 
 // NewRouter builds and returns the fully assembled chi router.
@@ -78,6 +84,18 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 	// so the admin router registers routes under /v1/... not /admin/v1/....
 	if deps.AdminHandler != nil {
 		r.Mount("/admin", deps.AdminHandler)
+	}
+
+	// ── Generic HTTP proxy plane ──────────────────────────────────────────────
+	// Mounted at /v1/proxy/{slug}, /v1/proxy/{slug}/* — accepts every HTTP method
+	// so any upstream API can be proxied transparently. Uses the proxy package's
+	// own DB-backed Bearer-token auth (ADR-0009, ADR-0010, ADR-0013).
+	if deps.ProxyHandler != nil && deps.ProxyAuth != nil {
+		r.Group(func(r chi.Router) {
+			r.Use(deps.ProxyAuth)
+			r.Handle("/v1/proxy/{slug}", deps.ProxyHandler)
+			r.Handle("/v1/proxy/{slug}/*", deps.ProxyHandler)
+		})
 	}
 
 	return r

@@ -1,11 +1,12 @@
-// Package proxyservice will implement the application-layer use cases for the generic
-// HTTP proxy engine: target selection, auth injection, and request/byte accounting.
+// Package proxyservice implements the application-layer use cases for the generic
+// HTTP proxy engine: endpoint lookup, grant verification, and target selection.
 //
-// Implementation deferred to Bloco 3 (proxy engine).
+// The package owns no HTTP-specific concerns — that is the responsibility of the
+// internal/proxy package. proxyservice imports only domain types, the load-balancer
+// package, and Go stdlib, keeping it fully unit-testable without infrastructure.
 //
 // References:
 //   - ADR-0010 — generic HTTP proxy engine
 //   - ADR-0013 — load balancing strategies
 //   - ADR-0015 — app layer use cases
-//   - docs/v2-alignment.md — Bloco 3
 package proxyservice

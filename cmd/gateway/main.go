@@ -40,6 +40,7 @@ import (
 	adminapi "github.com/D4nRossi/ai-gateway/internal/api/admin"
 	"github.com/D4nRossi/ai-gateway/internal/api/handlers"
 	"github.com/D4nRossi/ai-gateway/internal/app/adminservice"
+	"github.com/D4nRossi/ai-gateway/internal/app/proxyservice"
 	"github.com/D4nRossi/ai-gateway/internal/audit"
 	"github.com/D4nRossi/ai-gateway/internal/auth"
 	"github.com/D4nRossi/ai-gateway/internal/budget"
@@ -51,6 +52,8 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/providers"
 	"github.com/D4nRossi/ai-gateway/internal/providers/azureopenai"
 	"github.com/D4nRossi/ai-gateway/internal/providers/mock"
+	"github.com/D4nRossi/ai-gateway/internal/proxy"
+	"github.com/D4nRossi/ai-gateway/internal/proxy/loadbalancer"
 	"github.com/D4nRossi/ai-gateway/internal/ratelimit"
 	"github.com/D4nRossi/ai-gateway/internal/security/masking"
 	"github.com/D4nRossi/ai-gateway/internal/security/postvalidation"
@@ -139,6 +142,17 @@ func run() error {
 		logger.Warn("failed to purge expired admin sessions at startup", "err", err)
 	}
 
+	// ── 5b. Proxy plane (generic HTTP proxy engine) ───────────────────────────
+	// One shared *http.Transport across all targets keeps connection pools warm
+	// (ADR-0010, ADR-0013). Balancer state is kept per endpoint by the Registry,
+	// which detects strategy changes automatically.
+	balancerRegistry := loadbalancer.NewRegistry()
+	proxySvc := proxyservice.New(endpointRepo, balancerRegistry, logger)
+	proxyTransport := proxy.NewTransport()
+	proxyAuth := proxy.Auth(appRepo, logger)
+	proxyHandler := proxy.Handler(proxySvc, proxyTransport, logger)
+	logger.Info("generic proxy plane configured")
+
 	// ── 6. PolicyStore ────────────────────────────────────────────────────────
 	policyStore := auth.NewPolicyStore(cfg.Applications)
 
@@ -210,6 +224,8 @@ func run() error {
 		Pool:         pool,
 		Logger:       logger,
 		AdminHandler: adminRouter,
+		ProxyAuth:    proxyAuth,
+		ProxyHandler: proxyHandler,
 		ChatDeps: handlers.ChatDeps{
 			Provider:     prov,
 			Config:       cfg,
