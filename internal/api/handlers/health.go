@@ -26,8 +26,9 @@ func Health() http.HandlerFunc {
 // Returns 200 if both the PostgreSQL pool and the Azure endpoint are reachable.
 // Returns 503 with a body listing failed checks otherwise.
 //
-// Both checks use a 1-second timeout as required by SPEC §13.3. They run
-// concurrently to keep the probe fast.
+// DB check uses a 1-second timeout (local network). Azure check uses 5 seconds
+// because the Azure cognitive-services endpoint can take 1-2 s on cold-start
+// (measured: ~1.2 s from West Europe). Both checks run concurrently.
 //
 // References:
 //   - SPEC.md §6.1, §13.3
@@ -38,7 +39,6 @@ func Ready(pool *pgxpool.Pool, azureEndpoint string) http.HandlerFunc {
 			err  string
 		}
 
-		// Run DB and Azure checks concurrently; each gets its own 1s deadline.
 		dbCh := make(chan result, 1)
 		azureCh := make(chan result, 1)
 
@@ -53,7 +53,8 @@ func Ready(pool *pgxpool.Pool, azureEndpoint string) http.HandlerFunc {
 		}()
 
 		go func() {
-			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
+			// 5s: Azure cognitive-services base endpoint can take ~1.2s on cold-start.
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 			defer cancel()
 			req, err := http.NewRequestWithContext(ctx, http.MethodHead, azureEndpoint, nil)
 			if err != nil {
