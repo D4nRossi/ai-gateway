@@ -9,15 +9,15 @@ server:
 azure_openai:
   endpoint: ${AZURE_OPENAI_ENDPOINT}
   api_key: ${AZURE_OPENAI_API_KEY}
-  api_version: "2024-10-21"
+  api_version: "2025-01-01-preview"
   request_timeout_seconds: 60
 
-azure_content_safety:               # Optional: remove section to disable; Tier 3 falls back to local heuristics
-  endpoint: ${AZURE_CS_ENDPOINT}
-  api_key: ${AZURE_CS_API_KEY}
-  api_version: "2024-09-01"
-  prompt_shield_timeout_ms: 1500
-  content_safety_timeout_ms: 1500
+# azure_content_safety:             # Uncomment to enable Tier 3 cloud guardrails
+#   endpoint: ${AZURE_CS_ENDPOINT}
+#   api_key: ${AZURE_CS_API_KEY}
+#   api_version: "2024-09-01"
+#   prompt_shield_timeout_ms: 1500
+#   content_safety_timeout_ms: 1500
 
 database:
   url: ${DATABASE_URL}
@@ -30,18 +30,28 @@ logging:
   raw_prompt_logging: false         # MUST be false in any non-dev environment
 
 models:
+  # Deployment names match exactly the names created in Azure AI Foundry.
+  # Endpoint: https://danie-mc4ryviy-westeurope.cognitiveservices.azure.com
+  - public_name: gpt-4.1
+    deployment: gpt-4.1
+    provider: azure
+    cost_input_per_1k_brl: 0.0115   # ~$2.00/1M input at R$5.75/USD — adjust for prod
+    cost_output_per_1k_brl: 0.0460  # ~$8.00/1M output at R$5.75/USD — adjust for prod
+
   - public_name: gpt-4.1-mini
-    deployment: gpt-4.1-mini-deploy
+    deployment: gpt-4.1-mini
     provider: azure
-    cost_input_per_1k_brl: 0.0020   # ~$0.40/1M input tokens at R$5/USD (fictional — adjust for prod)
-    cost_output_per_1k_brl: 0.0080  # ~$1.60/1M output tokens at R$5/USD (fictional — adjust for prod)
+    cost_input_per_1k_brl: 0.0023   # ~$0.40/1M input at R$5.75/USD — adjust for prod
+    cost_output_per_1k_brl: 0.0092  # ~$1.60/1M output at R$5.75/USD — adjust for prod
+
   - public_name: gpt-4.1-nano
-    deployment: gpt-4.1-nano-deploy
+    deployment: gpt-4.1-nano
     provider: azure
-    cost_input_per_1k_brl: 0.0005   # ~$0.10/1M input tokens at R$5/USD (fictional — adjust for prod)
-    cost_output_per_1k_brl: 0.0020  # ~$0.40/1M output tokens at R$5/USD (fictional — adjust for prod)
+    cost_input_per_1k_brl: 0.0006   # ~$0.10/1M input at R$5.75/USD — adjust for prod
+    cost_output_per_1k_brl: 0.0023  # ~$0.40/1M output at R$5.75/USD — adjust for prod
 
 applications:
+  # ── Placeholder apps — substitua pelos seus times/aplicações reais ──────────
   - name: AppLeve
     key_prefix: gwk_leve
     key_hash: "504758522b63dcd54a9bae3e029d9b0bd4de45934857f04ccd3c1006f088fae4"
