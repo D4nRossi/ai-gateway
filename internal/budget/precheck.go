@@ -20,6 +20,17 @@ import (
 // ErrBudgetExceeded is returned when the application's monthly spend cap is reached.
 var ErrBudgetExceeded = errors.New("monthly budget exceeded")
 
+// PreChecker is the interface satisfied by Checker and any test stub.
+// Decoupling the chat handler from the concrete DB-backed Checker enables
+// unit testing without a live PostgreSQL connection.
+//
+// References:
+//   - SPEC.md §12.2
+//   - CLAUDE.md §14 — testability via interface injection
+type PreChecker interface {
+	Check(ctx context.Context, appName string, budgetBRL float64) error
+}
+
 // Checker performs synchronous budget pre-checks against the budget_counters table.
 type Checker struct {
 	pool   *pgxpool.Pool

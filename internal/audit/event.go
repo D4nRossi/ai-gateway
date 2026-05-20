@@ -8,6 +8,17 @@ package audit
 
 import "time"
 
+// Emitter is the interface satisfied by Writer and any test stub.
+// Decoupling handlers and middleware from the concrete async writer enables
+// unit testing without a live database connection.
+//
+// References:
+//   - SPEC.md §5.4
+//   - CLAUDE.md §14 — testability via interface injection
+type Emitter interface {
+	Emit(AuditEvent)
+}
+
 // AuditEvent captures a security or policy decision made during request processing.
 //
 // References:

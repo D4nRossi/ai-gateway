@@ -8,6 +8,17 @@ package usage
 
 import "time"
 
+// Emitter is the interface satisfied by Writer and any test stub.
+// Decoupling handlers from the concrete async writer enables unit testing
+// without a live database connection.
+//
+// References:
+//   - SPEC.md §5.4
+//   - CLAUDE.md §14 — testability via interface injection
+type Emitter interface {
+	Emit(UsageEvent)
+}
+
 // UsageEvent captures per-request token consumption and latency.
 //
 // References:

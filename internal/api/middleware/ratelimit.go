@@ -17,7 +17,7 @@ import (
 // References:
 //   - SPEC.md §9.1 step 5 — rate limit check
 //   - SPEC.md §12.1 — rate limit specification
-func RateLimit(mgr *ratelimit.Manager, auditWriter *audit.Writer, logger *slog.Logger) func(http.Handler) http.Handler {
+func RateLimit(mgr ratelimit.Limiter, auditWriter audit.Emitter, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := r.Context()

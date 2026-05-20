@@ -17,6 +17,18 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// Limiter is the interface satisfied by Manager and any test stub.
+// Decoupling the RateLimit middleware from the concrete in-memory Manager
+// enables unit testing and future Redis-backed implementations without
+// changing call sites (see ADR-0006).
+//
+// References:
+//   - SPEC.md §12.1
+//   - CLAUDE.md §14 — testability via interface injection
+type Limiter interface {
+	Allow(appName string) bool
+}
+
 // Manager holds a per-application rate limiter map.
 // Safe for concurrent use.
 type Manager struct {

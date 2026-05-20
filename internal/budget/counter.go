@@ -7,6 +7,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Recorder is the interface satisfied by Counter and any test stub.
+// Decoupling the chat handler from the concrete async Counter enables
+// unit testing without a live PostgreSQL connection.
+//
+// References:
+//   - SPEC.md §12.3
+//   - CLAUDE.md §14 — testability via interface injection
+type Recorder interface {
+	Record(UpdateEvent)
+}
+
 // UpdateEvent carries the data needed to update a budget counter row.
 type UpdateEvent struct {
 	ApplicationName string

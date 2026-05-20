@@ -32,7 +32,7 @@ type ctxKeyPolicy struct{}
 //   - SPEC.md §9.1 step 4
 //   - CLAUDE.md §5.6 — constant-time comparison requirement
 //   - CLAUDE.md §1.4 — never log the full token
-func Auth(store auth.PolicyStore, auditWriter *audit.Writer, logger *slog.Logger) func(http.Handler) http.Handler {
+func Auth(store auth.PolicyStore, auditWriter audit.Emitter, logger *slog.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			rid, _ := r.Context().Value(observability.RequestIDKey).(string)
@@ -91,8 +91,15 @@ func PolicyFrom(ctx context.Context) (auth.AppPolicy, bool) {
 	return p, ok
 }
 
+// WithPolicy returns a copy of ctx with p injected under the same key used
+// by the Auth middleware. Intended for use in tests that exercise handlers
+// directly, bypassing the full auth middleware chain.
+func WithPolicy(ctx context.Context, p auth.AppPolicy) context.Context {
+	return context.WithValue(ctx, ctxKeyPolicy{}, p)
+}
+
 // writeAuthError writes a 401 JSON error response and emits an audit event.
-func writeAuthError(w http.ResponseWriter, r *http.Request, rid, reason string, auditWriter *audit.Writer, logger *slog.Logger) {
+func writeAuthError(w http.ResponseWriter, r *http.Request, rid, reason string, auditWriter audit.Emitter, logger *slog.Logger) {
 	logger.Info("auth failed",
 		"request_id", rid,
 		"reason", reason,

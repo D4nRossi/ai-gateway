@@ -24,11 +24,13 @@ import (
 )
 
 // RouterDeps groups dependencies needed to assemble the router.
+// Rate limiter and audit writer are expressed as interfaces to allow
+// unit testing without live infrastructure (CLAUDE.md §14).
 type RouterDeps struct {
 	Config       *config.Config
 	PolicyStore  auth.PolicyStore
-	RateLimiter  *ratelimit.Manager
-	AuditWriter  *audit.Writer
+	RateLimiter  ratelimit.Limiter
+	AuditWriter  audit.Emitter
 	Pool         *pgxpool.Pool
 	ChatDeps     handlers.ChatDeps
 	Logger       *slog.Logger

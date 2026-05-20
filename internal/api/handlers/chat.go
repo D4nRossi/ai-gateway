@@ -29,13 +29,15 @@ import (
 const maxBodyBytes = 1 << 20
 
 // ChatDeps groups all dependencies for the Chat handler.
+// Async writers and budget components are expressed as interfaces to allow
+// unit testing without a live database connection (CLAUDE.md §14).
 type ChatDeps struct {
 	Provider     providers.Provider
 	Config       *config.Config
-	AuditWriter  *audit.Writer
-	UsageWriter  *usage.Writer
-	BudgetCheck  *budget.Checker
-	BudgetCount  *budget.Counter
+	AuditWriter  audit.Emitter
+	UsageWriter  usage.Emitter
+	BudgetCheck  budget.PreChecker
+	BudgetCount  budget.Recorder
 	ShieldClient *promptshield.Client    // nil if azure_content_safety not configured
 	Validator    *postvalidation.Validator
 	Logger       *slog.Logger
