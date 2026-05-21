@@ -60,8 +60,22 @@ cd web && pnpm dev               # Vite em http://localhost:5173
                                  # proxia /admin e /v1 para o Go em :8080
 ```
 
-> Para criar o primeiro usuário admin no banco, use a CLI ou um `INSERT` direto
-> (a senha precisa ser um hash bcrypt cost=12; veja `docs/admin-setup.md`).
+### Criar o primeiro admin
+
+O banco começa sem nenhum usuário admin — cada deploy define sua própria
+credencial inicial. Use a CLI dedicada:
+
+```bash
+# carrega DATABASE_URL e demais vars
+set -a && source .env && set +a
+
+# pergunta a senha sem ecoar (e pede confirmação)
+go run ./cmd/admin-create -username daniel -role admin
+```
+
+Depois disso, faça login em `http://localhost:8080/ui/login` e crie os demais
+usuários pela própria UI (papel `admin` pode gerenciar usuários, `operator`
+pode CRUD de aplicações/endpoints, `viewer` é só leitura).
 
 ## Início rápido (modo mock — sem Azure)
 

@@ -62,7 +62,9 @@ type RouterDeps struct {
 func NewRouter(deps RouterDeps) *chi.Mux {
 	r := chi.NewRouter()
 
-	// Outermost layer: panic recovery.
+	// Outermost layer: hardening headers + panic recovery.
+	// SecurityHeaders runs first so even panic-recovered 500s carry the hardening.
+	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.Recover(deps.Logger))
 
 	r.Use(middleware.RequestID)
@@ -102,11 +104,14 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 	}
 
 	// ── Admin SPA ─────────────────────────────────────────────────────────────
-	// chi.Mount strips the /ui prefix before invoking WebHandler, which serves
-	// the embedded Vite build. Visiting / redirects to /ui/ so the landing page
-	// is the admin console (ADR-0014).
+	// chi.Mount only updates the RouteContext — it does NOT strip the prefix
+	// from r.URL.Path. http.StripPrefix is required so the embedded file server
+	// sees paths relative to the dist root ("/assets/foo.css") instead of the
+	// full URL ("/ui/assets/foo.css") which would 404 and fall through to
+	// index.html, breaking CSS/JS MIME types in the browser (ADR-0014).
+	// Visiting / redirects to /ui/ so the landing page is the admin console.
 	if deps.WebHandler != nil {
-		r.Mount("/ui", deps.WebHandler)
+		r.Mount("/ui", http.StripPrefix("/ui", deps.WebHandler))
 		r.Get("/", func(w http.ResponseWriter, req *http.Request) {
 			http.Redirect(w, req, "/ui/", http.StatusFound)
 		})

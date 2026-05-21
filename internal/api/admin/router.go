@@ -70,8 +70,13 @@ type Deps struct {
 func NewRouter(deps Deps) http.Handler {
 	r := chi.NewRouter()
 
-	// ── Public: login only ────────────────────────────────────────────────────
-	r.Post("/v1/auth/login", adminhandlers.Login(deps.Svc))
+	// ── Public: login (rate-limited per IP) ──────────────────────────────────
+	// Brute-force defense: 5 attempts per minute per IP (token bucket).
+	// Failed AND successful attempts both consume tokens — leaking that
+	// distinction would enable an enumeration oracle.
+	loginLimiter := adminmw.NewLoginLimiter(0, 0, 0) // safe defaults
+	r.With(loginLimiter.Middleware()).
+		Post("/v1/auth/login", adminhandlers.Login(deps.Svc))
 
 	// ── Protected: all remaining routes require a valid session ───────────────
 	r.Group(func(r chi.Router) {

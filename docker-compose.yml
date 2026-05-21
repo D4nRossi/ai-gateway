@@ -1,18 +1,38 @@
+# Compose dev/staging — single-host, sem TLS terminator.
+# Para produção: ver docs/deployment.md (recomendação: Caddy ou Nginx em front
+# fazendo TLS termination e proxy reverso para o serviço gateway).
+#
+# Subir:
+#   docker compose up -d --build
+#
+# Logs:
+#   docker compose logs -f gateway
+#
+# Aplicar migrations + criar primeiro admin:
+#   docker compose exec gateway ./ai-gateway   # migrations rodam no boot
+#   docker compose run --rm gateway sh -c \
+#     "DATABASE_URL=$DATABASE_URL ./admin-create -username daniel -role admin"
+#   (assumindo admin-create incluído na imagem — não está por padrão; rode
+#    `go run ./cmd/admin-create` no host com .env carregado)
+
 services:
 
   # ── PostgreSQL ──────────────────────────────────────────────────────────────
   postgres:
     image: postgres:17-alpine
     environment:
-      POSTGRES_USER: gateway
-      POSTGRES_PASSWORD: gateway
-      POSTGRES_DB: gateway
+      POSTGRES_USER: ${POSTGRES_USER:-gateway}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-gateway}
+      POSTGRES_DB: ${POSTGRES_DB:-gateway}
+    # Em dev expomos 5432 para inspeção via psql/pgAdmin no host.
+    # Para prod: REMOVER esta seção `ports:` — o gateway acessa via rede interna.
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gateway -d gateway"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-gateway} -d ${POSTGRES_DB:-gateway}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -25,16 +45,27 @@ services:
     ports:
       - "8080:8080"
     environment:
+      # Provider Azure OpenAI (segredos via .env do host).
       AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      # Content Safety (opcional — só Tier 3).
       AZURE_CS_ENDPOINT: ${AZURE_CS_ENDPOINT:-}
       AZURE_CS_API_KEY: ${AZURE_CS_API_KEY:-}
-      DATABASE_URL: postgres://gateway:gateway@postgres:5432/gateway?sslmode=disable
+      # DB via rede interna do compose.
+      DATABASE_URL: postgres://${POSTGRES_USER:-gateway}:${POSTGRES_PASSWORD:-gateway}@postgres:5432/${POSTGRES_DB:-gateway}?sslmode=disable
+      # AES-256-GCM key (32 bytes = 64 hex chars) — obrigatório (ADR-0012).
+      DB_ENCRYPTION_KEY: ${DB_ENCRYPTION_KEY}
       PROVIDER: ${PROVIDER:-azure}
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
 
 volumes:
   pgdata:
