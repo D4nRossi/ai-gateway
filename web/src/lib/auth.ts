@@ -30,15 +30,33 @@ let cachedSnapshot: Session | null = null;
 let cachedKey = "";
 
 function buildSnapshot(): { session: Session | null; key: string } {
-  const token = sessionStorage.getItem(TOKEN_KEY);
-  const expiresAt = sessionStorage.getItem(EXPIRES_KEY);
-  const role = sessionStorage.getItem(ROLE_KEY) as Role | null;
+  let token: string | null = null;
+  let expiresAt: string | null = null;
+  let role: Role | null = null;
+  try {
+    token = sessionStorage.getItem(TOKEN_KEY);
+    expiresAt = sessionStorage.getItem(EXPIRES_KEY);
+    role = sessionStorage.getItem(ROLE_KEY) as Role | null;
+  } catch {
+    // sessionStorage pode ser bloqueado (private mode, quota cheia, etc.).
+    return { session: null, key: "no-storage" };
+  }
   const key = `${token ?? ""}|${expiresAt ?? ""}|${role ?? ""}`;
 
   if (!token || !expiresAt || !role) {
     return { session: null, key };
   }
-  if (Date.parse(expiresAt) < Date.now()) {
+
+  // role precisa ser um dos valores conhecidos; valor inesperado = storage corrompido.
+  if (role !== "admin" && role !== "operator" && role !== "viewer") {
+    return { session: null, key: "invalid-role" };
+  }
+
+  const expiry = Date.parse(expiresAt);
+  if (Number.isNaN(expiry)) {
+    return { session: null, key: "invalid-expiry" };
+  }
+  if (expiry < Date.now()) {
     return { session: null, key: "expired" };
   }
   return { session: { token, expiresAt, role }, key };

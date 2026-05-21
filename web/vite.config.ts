@@ -37,7 +37,11 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    sourcemap: false,
+    // Source maps inline-pelo-bundler: stacks de erro no browser apontam para
+    // arquivos fonte (.tsx) em vez de offsets minificados. Custo: ~1 MB extra
+    // no dist (não vai pra produção do binário se você quiser remover —
+    // basta trocar para false antes de buildar a imagem final).
+    sourcemap: true,
     target: "es2022",
     chunkSizeWarningLimit: 1000,
   },

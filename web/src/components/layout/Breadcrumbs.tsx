@@ -1,4 +1,4 @@
-import { Link, useLocation, useMatches } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -8,12 +8,13 @@ interface Crumb {
 }
 
 /**
- * Breadcrumbs — deriva a trilha a partir do pathname + dados expostos por
- * detail pages via React Router data ("handle" no Route).
+ * Breadcrumbs — deriva a trilha do pathname.
  *
- * Páginas que precisam mostrar nome dinâmico (ex: /applications/:id → "AppDemo")
- * exportam um <BreadcrumbContext> com o label atualizado. As listagens não
- * precisam — o mapa estático cobre o nível raiz.
+ * Para evitar dependência do `useMatches` (que exige createBrowserRouter, não
+ * o BrowserRouter declarativo), o componente é totalmente baseado no caminho
+ * URL. Detail pages exibem o nome dinâmico no próprio cabeçalho da página;
+ * aqui mostramos apenas "Detalhes" para segmentos numéricos, o que já dá
+ * navegação reversa correta.
  */
 const ROOT_LABELS: Record<string, string> = {
   dashboard: "Visão geral",
@@ -25,46 +26,30 @@ const ROOT_LABELS: Record<string, string> = {
 
 export function Breadcrumbs() {
   const location = useLocation();
-  const matches = useMatches();
   const segments = location.pathname.split("/").filter(Boolean);
+
+  if (segments.length === 0) {
+    return null;
+  }
 
   const crumbs: Crumb[] = [];
   let acc = "";
   for (let i = 0; i < segments.length; i++) {
     acc += "/" + segments[i];
     const seg = segments[i];
+    const last = i === segments.length - 1;
 
-    // Static root label (Applications, Endpoints…)
-    const rootLabel = ROOT_LABELS[seg];
-    if (rootLabel) {
-      crumbs.push({
-        label: rootLabel,
-        to: i < segments.length - 1 ? acc : undefined,
-      });
-      continue;
+    let label: string;
+    if (ROOT_LABELS[seg]) {
+      label = ROOT_LABELS[seg];
+    } else if (/^\d+$/.test(seg)) {
+      // Detail page (id numérico) — a tela mostra o nome real grande no header.
+      label = "Detalhes";
+    } else {
+      label = seg.charAt(0).toUpperCase() + seg.slice(1);
     }
 
-    // Detail pages can advertise their label via Route `handle: { crumb: "..." }`.
-    // useMatches surfaces handle data from every matched route in order.
-    const handle = matches[matches.length - 1]?.handle as
-      | { crumb?: string | ((params: Record<string, string | undefined>) => string) }
-      | undefined;
-    if (i === segments.length - 1 && handle?.crumb) {
-      const params = (matches[matches.length - 1]?.params ?? {}) as Record<string, string | undefined>;
-      const label = typeof handle.crumb === "function" ? handle.crumb(params) : handle.crumb;
-      crumbs.push({ label });
-      continue;
-    }
-
-    // Fallback: capitalise the raw segment.
-    crumbs.push({
-      label: seg.charAt(0).toUpperCase() + seg.slice(1),
-      to: i < segments.length - 1 ? acc : undefined,
-    });
-  }
-
-  if (crumbs.length === 0) {
-    return null;
+    crumbs.push({ label, to: last ? undefined : acc });
   }
 
   return (

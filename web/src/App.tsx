@@ -29,17 +29,9 @@ export default function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/applications" element={<Applications />} />
-          <Route
-            path="/applications/:id"
-            element={<ApplicationDetail />}
-            handle={{ crumb: "Detalhes" }}
-          />
+          <Route path="/applications/:id" element={<ApplicationDetail />} />
           <Route path="/endpoints" element={<Endpoints />} />
-          <Route
-            path="/endpoints/:id"
-            element={<EndpointDetail />}
-            handle={{ crumb: "Detalhes" }}
-          />
+          <Route path="/endpoints/:id" element={<EndpointDetail />} />
           <Route path="/users" element={<Users requireAdmin />} />
           <Route path="/observability" element={<Observability />} />
         </Route>
