@@ -277,6 +277,30 @@ func (r *EndpointRepo) ListGrantedApplicationIDs(ctx context.Context, endpointID
 	return ids, nil
 }
 
+// ListGrantedEndpointIDs returns all endpoint IDs an application has been granted.
+func (r *EndpointRepo) ListGrantedEndpointIDs(ctx context.Context, applicationID int64) ([]int64, error) {
+	const q = `SELECT endpoint_id FROM application_endpoint_grants WHERE application_id = $1`
+
+	rows, err := r.pool.Query(ctx, q, applicationID)
+	if err != nil {
+		return nil, fmt.Errorf("listing grants for app id=%d: %w", applicationID, err)
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning grant row: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating grant rows: %w", err)
+	}
+	return ids, nil
+}
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 func (r *EndpointRepo) loadTargets(ctx context.Context, endpointID int64) ([]endpoint.Target, error) {

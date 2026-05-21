@@ -102,6 +102,7 @@ func NewRouter(deps Deps) http.Handler {
 			r.Put("/v1/applications/{id}", adminhandlers.UpdateApplication(deps.Svc))
 			r.Delete("/v1/applications/{id}", adminhandlers.DeleteApplication(deps.Svc))
 			r.Post("/v1/applications/{id}/rotate-key", adminhandlers.RotateAPIKey(deps.Svc))
+			r.Get("/v1/applications/{id}/grants", adminhandlers.ListGrants(deps.Svc))
 			r.Post("/v1/applications/{id}/grants/{endpointID}", adminhandlers.GrantEndpointAccess(deps.Svc))
 			r.Delete("/v1/applications/{id}/grants/{endpointID}", adminhandlers.RevokeEndpointAccess(deps.Svc))
 		})

@@ -279,6 +279,30 @@ func RotateAPIKey(svc *adminservice.Service) http.HandlerFunc {
 	}
 }
 
+// ListGrants handles GET /admin/v1/applications/{id}/grants.
+// Returns every proxy endpoint the application has been granted access to.
+// Used by the admin detail page to render the access matrix.
+func ListGrants(svc *adminservice.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := parseID(w, r, "id")
+		if !ok {
+			return
+		}
+
+		eps, err := svc.ListEndpointGrants(r.Context(), id)
+		if err != nil {
+			writeAdminError(w, http.StatusInternalServerError, "internal", "failed to list grants")
+			return
+		}
+
+		resp := make([]endpointResponse, len(eps))
+		for i, ep := range eps {
+			resp[i] = toEndpointResponse(ep)
+		}
+		writeJSON(w, http.StatusOK, resp)
+	}
+}
+
 // GrantEndpointAccess handles POST /admin/v1/applications/{id}/grants/{endpointID}.
 // Allows the application to call the specified proxy endpoint. Idempotent.
 func GrantEndpointAccess(svc *adminservice.Service) http.HandlerFunc {

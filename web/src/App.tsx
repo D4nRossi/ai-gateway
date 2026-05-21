@@ -5,7 +5,9 @@ import { Toaster } from "./components/ui/sonner";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Applications from "./pages/Applications";
+import ApplicationDetail from "./pages/ApplicationDetail";
 import Endpoints from "./pages/Endpoints";
+import EndpointDetail from "./pages/EndpointDetail";
 import Users from "./pages/Users";
 import Observability from "./pages/Observability";
 
@@ -27,7 +29,17 @@ export default function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/applications" element={<Applications />} />
+          <Route
+            path="/applications/:id"
+            element={<ApplicationDetail />}
+            handle={{ crumb: "Detalhes" }}
+          />
           <Route path="/endpoints" element={<Endpoints />} />
+          <Route
+            path="/endpoints/:id"
+            element={<EndpointDetail />}
+            handle={{ crumb: "Detalhes" }}
+          />
           <Route path="/users" element={<Users requireAdmin />} />
           <Route path="/observability" element={<Observability />} />
         </Route>

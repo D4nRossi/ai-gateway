@@ -22,7 +22,38 @@ export interface Session {
 
 const listeners = new Set<() => void>();
 
+// Snapshot cache — useSyncExternalStore compares snapshots with Object.is, so
+// we MUST return the same reference until something actually changes. Building
+// a fresh { token, expiresAt, role } on every read would trigger an infinite
+// render loop (React error #185).
+let cachedSnapshot: Session | null = null;
+let cachedKey = "";
+
+function buildSnapshot(): { session: Session | null; key: string } {
+  const token = sessionStorage.getItem(TOKEN_KEY);
+  const expiresAt = sessionStorage.getItem(EXPIRES_KEY);
+  const role = sessionStorage.getItem(ROLE_KEY) as Role | null;
+  const key = `${token ?? ""}|${expiresAt ?? ""}|${role ?? ""}`;
+
+  if (!token || !expiresAt || !role) {
+    return { session: null, key };
+  }
+  if (Date.parse(expiresAt) < Date.now()) {
+    return { session: null, key: "expired" };
+  }
+  return { session: { token, expiresAt, role }, key };
+}
+
+function refreshCache(): void {
+  const next = buildSnapshot();
+  if (next.key !== cachedKey) {
+    cachedSnapshot = next.session;
+    cachedKey = next.key;
+  }
+}
+
 function emit(): void {
+  refreshCache();
   listeners.forEach((fn) => {
     try {
       fn();
@@ -32,24 +63,35 @@ function emit(): void {
   });
 }
 
+// Initial population so the first getSession() call returns the right snapshot.
+refreshCache();
+
+// React to setSession/clearSession from other tabs of the same browser.
+// Without this, two tabs of the console could disagree on auth state.
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", () => emit());
+}
+
 /** subscribe to session changes; returns an unsubscribe function. */
 export function subscribe(fn: () => void): () => void {
   listeners.add(fn);
   return () => listeners.delete(fn);
 }
 
-/** Returns the current session or null if not logged in / expired. */
+/**
+ * Returns the current session or null if not logged in / expired.
+ * Stable reference across renders — useSyncExternalStore depends on this.
+ *
+ * The cache is invalidated by setSession/clearSession (via emit) and by the
+ * "storage" window event (cross-tab updates). Stale expiry is also detected
+ * here because Date.parse(expiresAt) is part of the cache key.
+ */
 export function getSession(): Session | null {
-  const token = sessionStorage.getItem(TOKEN_KEY);
-  const expiresAt = sessionStorage.getItem(EXPIRES_KEY);
-  const role = sessionStorage.getItem(ROLE_KEY) as Role | null;
-  if (!token || !expiresAt || !role) return null;
-  // Defensive: if the stored expiry is in the past, treat as logged out.
-  if (Date.parse(expiresAt) < Date.now()) {
+  // Cheap path: re-check expiry against the wall clock without rebuilding.
+  if (cachedSnapshot && Date.parse(cachedSnapshot.expiresAt) < Date.now()) {
     clearSession();
-    return null;
   }
-  return { token, expiresAt, role };
+  return cachedSnapshot;
 }
 
 export function setSession(s: Session): void {

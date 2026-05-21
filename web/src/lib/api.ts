@@ -251,6 +251,9 @@ export const api = {
   rotateKey(id: number): Promise<RotateKeyResponse> {
     return request(`/admin/v1/applications/${id}/rotate-key`, { method: "POST" });
   },
+  listGrants(appId: number): Promise<ProxyEndpoint[]> {
+    return request(`/admin/v1/applications/${appId}/grants`);
+  },
   grantAccess(appId: number, endpointId: number): Promise<void> {
     return request(`/admin/v1/applications/${appId}/grants/${endpointId}`, {
       method: "POST",

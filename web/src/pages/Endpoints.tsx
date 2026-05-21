@@ -1,6 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import {
   ChevronRight,
+  Eye,
   Loader2,
   MoreHorizontal,
   Network,
@@ -47,14 +49,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
-import {
-  api,
-  type AuthType,
-  type LBStrategy,
-  type ProxyEndpoint,
-  type Target,
-  type TargetAuthInput,
-} from "@/lib/api";
+import { DataTableToolbar } from "@/components/DataTableToolbar";
+import { api, type LBStrategy, type ProxyEndpoint } from "@/lib/api";
+import { filterByText } from "@/lib/filter";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 
 const STRATEGIES: { value: LBStrategy; label: string }[] = [
@@ -68,10 +65,10 @@ const STRATEGIES: { value: LBStrategy; label: string }[] = [
 export default function Endpoints() {
   const [endpoints, setEndpoints] = useState<ProxyEndpoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<ProxyEndpoint | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ProxyEndpoint | null>(null);
-  const [managingTargets, setManagingTargets] = useState<ProxyEndpoint | null>(null);
 
   async function refresh() {
     setLoading(true);
@@ -90,18 +87,30 @@ export default function Endpoints() {
     void refresh();
   }, []);
 
+  const filtered = useMemo(
+    () => filterByText(endpoints, search, (e) => [e.slug, e.name, e.lb_strategy]),
+    [endpoints, search],
+  );
+
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between">
-        <p className="text-sm text-muted-foreground">
-          Endpoints HTTP genéricos proxied pelo gateway, com targets e estratégia de
-          balanceamento.
-        </p>
-        <Button onClick={() => setCreating(true)}>
-          <Plus className="h-4 w-4" />
-          Novo endpoint
-        </Button>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Endpoints HTTP genéricos proxied pelo gateway, com targets e estratégia de balanceamento.
+      </p>
+
+      <DataTableToolbar
+        search={search}
+        onSearchChange={setSearch}
+        onRefresh={refresh}
+        refreshing={loading}
+        placeholder="Buscar por slug, nome ou estratégia…"
+        rightSlot={
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="h-4 w-4" />
+            Novo endpoint
+          </Button>
+        }
+      />
 
       <Card>
         <CardContent className="p-0">
@@ -133,9 +142,20 @@ export default function Endpoints() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {endpoints.map((ep) => (
+                {filtered.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={7} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                      Nenhum endpoint corresponde ao filtro.
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+                {filtered.map((ep) => (
                   <TableRow key={ep.id}>
-                    <TableCell className="font-mono text-xs">{ep.slug}</TableCell>
+                    <TableCell className="font-mono text-xs">
+                      <Link to={`/endpoints/${ep.id}`} className="hover:text-primary hover:underline">
+                        {ep.slug}
+                      </Link>
+                    </TableCell>
                     <TableCell className="font-medium">{ep.name}</TableCell>
                     <TableCell>
                       <Badge variant="outline" className="font-mono text-[10px]">
@@ -157,14 +177,11 @@ export default function Endpoints() {
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center justify-end gap-1">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8"
-                          onClick={() => setManagingTargets(ep)}
-                        >
-                          Targets
-                          <ChevronRight className="h-3 w-3" />
+                        <Button asChild variant="ghost" size="sm" className="h-8">
+                          <Link to={`/endpoints/${ep.id}`}>
+                            Detalhes
+                            <ChevronRight className="h-3 w-3" />
+                          </Link>
                         </Button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -173,6 +190,12 @@ export default function Endpoints() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
+                            <DropdownMenuItem asChild>
+                              <Link to={`/endpoints/${ep.id}`}>
+                                <Eye className="h-4 w-4" />
+                                Ver detalhes
+                              </Link>
+                            </DropdownMenuItem>
                             <DropdownMenuItem onSelect={() => setEditing(ep)}>
                               <Pencil className="h-4 w-4" />
                               Editar
@@ -248,12 +271,6 @@ export default function Endpoints() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      <TargetsDialog
-        endpoint={managingTargets}
-        onClose={() => setManagingTargets(null)}
-        onUpdated={() => void refresh()}
-      />
     </div>
   );
 }
@@ -441,364 +458,3 @@ function EndpointFormDialog({
 }
 
 // ── Targets dialog ────────────────────────────────────────────────────────────
-
-interface TargetForm {
-  url: string;
-  weight: number;
-  active: boolean;
-  auth: TargetAuthInput;
-}
-
-const EMPTY_TARGET_FORM: TargetForm = {
-  url: "",
-  weight: 1,
-  active: true,
-  auth: { type: "none" },
-};
-
-function TargetsDialog({
-  endpoint,
-  onClose,
-  onUpdated,
-}: {
-  endpoint: ProxyEndpoint | null;
-  onClose: () => void;
-  onUpdated: () => void;
-}) {
-  const [detail, setDetail] = useState<ProxyEndpoint | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [editing, setEditing] = useState<Target | null>(null);
-  const [form, setForm] = useState<TargetForm>(EMPTY_TARGET_FORM);
-  const [submitting, setSubmitting] = useState(false);
-
-  useEffect(() => {
-    if (!endpoint) {
-      setDetail(null);
-      return;
-    }
-    setLoading(true);
-    api
-      .getEndpoint(endpoint.id)
-      .then(setDetail)
-      .catch((err) => toast.error(err instanceof Error ? err.message : "Falha ao carregar targets"))
-      .finally(() => setLoading(false));
-  }, [endpoint]);
-
-  useEffect(() => {
-    if (editing) {
-      setForm({
-        url: editing.url,
-        weight: editing.weight,
-        active: editing.active,
-        auth: { type: editing.auth_type },
-      });
-    } else {
-      setForm(EMPTY_TARGET_FORM);
-    }
-  }, [editing]);
-
-  async function refresh() {
-    if (!endpoint) return;
-    try {
-      setDetail(await api.getEndpoint(endpoint.id));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao atualizar");
-    }
-  }
-
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!endpoint) return;
-    setSubmitting(true);
-    try {
-      if (editing) {
-        await api.updateTarget(endpoint.id, editing.id, {
-          url: form.url,
-          weight: form.weight,
-          active: form.active,
-          auth: form.auth,
-        });
-        toast.success("Target atualizado");
-      } else {
-        await api.addTarget(endpoint.id, {
-          url: form.url,
-          weight: form.weight,
-          auth: form.auth,
-        });
-        toast.success("Target adicionado");
-      }
-      setAdding(false);
-      setEditing(null);
-      await refresh();
-      onUpdated();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao salvar");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  return (
-    <Dialog
-      open={endpoint !== null}
-      onOpenChange={(o) => {
-        if (!o) {
-          setAdding(false);
-          setEditing(null);
-          onClose();
-        }
-      }}
-    >
-      <DialogContent className="max-w-3xl">
-        <DialogHeader>
-          <DialogTitle>Targets de {endpoint?.name}</DialogTitle>
-          <DialogDescription>
-            Upstreams reais para onde o proxy roteia as chamadas. Credenciais são cifradas em
-            repouso com AES-256-GCM.
-          </DialogDescription>
-        </DialogHeader>
-
-        {adding || editing ? (
-          <form className="space-y-4" onSubmit={onSubmit}>
-            <div className="space-y-2">
-              <Label>URL upstream</Label>
-              <Input
-                value={form.url}
-                onChange={(e) => setForm({ ...form, url: e.target.value })}
-                placeholder="https://speech.eastus.azure.com"
-                disabled={submitting}
-                required
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Peso</Label>
-                <Input
-                  type="number"
-                  min={1}
-                  value={form.weight}
-                  onChange={(e) => setForm({ ...form, weight: Number(e.target.value) })}
-                  disabled={submitting}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Tipo de autenticação</Label>
-                <Select
-                  value={form.auth.type}
-                  onValueChange={(v) =>
-                    setForm({ ...form, auth: { type: v as AuthType } })
-                  }
-                  disabled={submitting}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">none</SelectItem>
-                    <SelectItem value="bearer_token">bearer_token</SelectItem>
-                    <SelectItem value="api_key_header">api_key_header</SelectItem>
-                    <SelectItem value="basic_auth">basic_auth</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {form.auth.type === "bearer_token" && (
-              <div className="space-y-2">
-                <Label>Token</Label>
-                <Input
-                  value={form.auth.token ?? ""}
-                  onChange={(e) =>
-                    setForm({ ...form, auth: { ...form.auth, token: e.target.value } })
-                  }
-                  disabled={submitting}
-                  required
-                />
-              </div>
-            )}
-
-            {form.auth.type === "api_key_header" && (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Header</Label>
-                  <Input
-                    value={form.auth.header ?? ""}
-                    onChange={(e) =>
-                      setForm({ ...form, auth: { ...form.auth, header: e.target.value } })
-                    }
-                    placeholder="Ocp-Apim-Subscription-Key"
-                    disabled={submitting}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Valor</Label>
-                  <Input
-                    value={form.auth.value ?? ""}
-                    onChange={(e) =>
-                      setForm({ ...form, auth: { ...form.auth, value: e.target.value } })
-                    }
-                    disabled={submitting}
-                    required
-                  />
-                </div>
-              </div>
-            )}
-
-            {form.auth.type === "basic_auth" && (
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Usuário</Label>
-                  <Input
-                    value={form.auth.username ?? ""}
-                    onChange={(e) =>
-                      setForm({ ...form, auth: { ...form.auth, username: e.target.value } })
-                    }
-                    disabled={submitting}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Senha</Label>
-                  <Input
-                    type="password"
-                    value={form.auth.password ?? ""}
-                    onChange={(e) =>
-                      setForm({ ...form, auth: { ...form.auth, password: e.target.value } })
-                    }
-                    disabled={submitting}
-                    required
-                  />
-                </div>
-              </div>
-            )}
-
-            {editing && (
-              <div className="flex items-center justify-between rounded-md border border-input bg-background/40 px-3 py-2">
-                <div>
-                  <p className="text-sm font-medium">Target ativo</p>
-                </div>
-                <Switch
-                  checked={form.active}
-                  onCheckedChange={(c) => setForm({ ...form, active: c })}
-                  disabled={submitting}
-                />
-              </div>
-            )}
-
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => {
-                  setAdding(false);
-                  setEditing(null);
-                }}
-                disabled={submitting}
-              >
-                Cancelar
-              </Button>
-              <Button type="submit" disabled={submitting}>
-                {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-                {editing ? "Salvar" : "Adicionar"}
-              </Button>
-            </DialogFooter>
-          </form>
-        ) : (
-          <>
-            <div className="rounded-md border border-border">
-              {loading ? (
-                <div className="space-y-2 p-4">
-                  <Skeleton className="h-8 w-full" />
-                  <Skeleton className="h-8 w-full" />
-                </div>
-              ) : !detail || detail.targets.length === 0 ? (
-                <div className="px-4 py-10 text-center text-sm text-muted-foreground">
-                  Nenhum target ainda. Adicione o primeiro.
-                </div>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>URL</TableHead>
-                      <TableHead>Peso</TableHead>
-                      <TableHead>Auth</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead className="w-[60px]" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {detail.targets.map((t) => (
-                      <TableRow key={t.id}>
-                        <TableCell className="font-mono text-xs">{t.url}</TableCell>
-                        <TableCell className="font-mono text-xs">{t.weight}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="font-mono text-[10px]">
-                            {t.auth_type}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {t.active ? (
-                            <Badge variant="success">Ativo</Badge>
-                          ) : (
-                            <Badge variant="muted">Inativo</Badge>
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <MoreHorizontal className="h-4 w-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onSelect={() => setEditing(t)}>
-                                <Pencil className="h-4 w-4" />
-                                Editar
-                              </DropdownMenuItem>
-                              <DropdownMenuSeparator />
-                              <DropdownMenuItem
-                                variant="destructive"
-                                onSelect={async () => {
-                                  if (!endpoint) return;
-                                  try {
-                                    await api.removeTarget(endpoint.id, t.id);
-                                    toast.success("Target removido");
-                                    await refresh();
-                                    onUpdated();
-                                  } catch (err) {
-                                    toast.error(
-                                      err instanceof Error ? err.message : "Falha ao remover",
-                                    );
-                                  }
-                                }}
-                              >
-                                <Trash2 className="h-4 w-4" />
-                                Remover
-                              </DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </div>
-
-            <DialogFooter>
-              <Button variant="outline" onClick={onClose}>
-                Fechar
-              </Button>
-              <Button onClick={() => setAdding(true)}>
-                <Plus className="h-4 w-4" />
-                Adicionar target
-              </Button>
-            </DialogFooter>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}

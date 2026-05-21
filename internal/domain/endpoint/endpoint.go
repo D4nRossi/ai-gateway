@@ -193,4 +193,8 @@ type Repository interface {
 
 	// ListGrantedApplicationIDs returns all application IDs granted access to an endpoint.
 	ListGrantedApplicationIDs(ctx context.Context, endpointID int64) ([]int64, error)
+
+	// ListGrantedEndpointIDs returns all endpoint IDs that an application has been
+	// granted access to. Used by the admin detail page to render the access matrix.
+	ListGrantedEndpointIDs(ctx context.Context, applicationID int64) ([]int64, error)
 }

@@ -401,6 +401,30 @@ func (s *Service) RemoveTarget(ctx context.Context, targetID int64) error {
 	return nil
 }
 
+// ListEndpointGrants returns every proxy endpoint an application has been
+// granted access to. Used by the admin UI access matrix.
+func (s *Service) ListEndpointGrants(ctx context.Context, applicationID int64) ([]endpoint.ProxyEndpoint, error) {
+	ids, err := s.endpoints.ListGrantedEndpointIDs(ctx, applicationID)
+	if err != nil {
+		return nil, fmt.Errorf("listing endpoint grants for app id=%d: %w", applicationID, err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	// N+1 is acceptable here — admin pages are low-traffic and the grant count
+	// per application is typically < 20. If this becomes a hotspot, switch to
+	// a JOIN in a dedicated repository method.
+	out := make([]endpoint.ProxyEndpoint, 0, len(ids))
+	for _, id := range ids {
+		ep, err := s.endpoints.Get(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("loading granted endpoint id=%d: %w", id, err)
+		}
+		out = append(out, ep)
+	}
+	return out, nil
+}
+
 // GrantAccess allows an application to call a proxy endpoint.
 func (s *Service) GrantAccess(ctx context.Context, applicationID, endpointID int64) error {
 	if err := s.endpoints.Grant(ctx, applicationID, endpointID); err != nil {

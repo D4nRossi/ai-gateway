@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { LogOut, ShieldCheck, User as UserIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -14,23 +14,11 @@ import { useSession } from "@/lib/useAuth";
 import { clearSession } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { toast } from "@/components/ui/sonner";
-
-const TITLES: Record<string, string> = {
-  "/dashboard": "Visão geral",
-  "/applications": "Aplicações",
-  "/endpoints": "Endpoints",
-  "/users": "Usuários",
-  "/observability": "Observabilidade",
-};
+import { Breadcrumbs } from "./Breadcrumbs";
 
 export function Header() {
-  const location = useLocation();
   const navigate = useNavigate();
   const session = useSession();
-
-  const title =
-    TITLES[Object.keys(TITLES).find((p) => location.pathname.startsWith(p)) ?? ""] ??
-    "Console";
 
   async function handleLogout() {
     try {
@@ -45,9 +33,7 @@ export function Header() {
 
   return (
     <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-border bg-background/60 px-8 backdrop-blur-md">
-      <div>
-        <h1 className="text-xl font-semibold tracking-tight">{title}</h1>
-      </div>
+      <Breadcrumbs />
 
       <div className="flex items-center gap-3">
         {session && (

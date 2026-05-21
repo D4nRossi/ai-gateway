@@ -1,6 +1,8 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import {
   Copy,
+  Eye,
   KeyRound,
   Loader2,
   MoreHorizontal,
@@ -49,7 +51,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
+import { DataTableToolbar } from "@/components/DataTableToolbar";
 import { api, type Application, type Tier } from "@/lib/api";
+import { filterByText } from "@/lib/filter";
 import { formatBRL, formatDateTime, formatNumber } from "@/lib/utils";
 
 interface FormState {
@@ -90,6 +94,7 @@ function toForm(app: Application): FormState {
 export default function Applications() {
   const [apps, setApps] = useState<Application[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Application | null>(null);
   const [creating, setCreating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<Application | null>(null);
@@ -111,20 +116,30 @@ export default function Applications() {
     void refresh();
   }, []);
 
+  const filtered = useMemo(
+    () => filterByText(apps, search, (a) => [a.name, a.tier]),
+    [apps, search],
+  );
+
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-end justify-between">
-        <div>
-          <p className="text-sm text-muted-foreground">
-            Aplicações registradas no gateway, com seus limites e tokens de acesso.
-          </p>
-        </div>
-        <Button onClick={() => setCreating(true)}>
-          <Plus className="h-4 w-4" />
-          Nova aplicação
-        </Button>
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Aplicações registradas no gateway, com seus limites e tokens de acesso.
+      </p>
+
+      <DataTableToolbar
+        search={search}
+        onSearchChange={setSearch}
+        onRefresh={refresh}
+        refreshing={loading}
+        placeholder="Buscar por nome ou tier…"
+        rightSlot={
+          <Button onClick={() => setCreating(true)}>
+            <Plus className="h-4 w-4" />
+            Nova aplicação
+          </Button>
+        }
+      />
 
       <Card>
         <CardContent className="p-0">
@@ -144,6 +159,10 @@ export default function Applications() {
                 Criar primeira aplicação
               </Button>
             </div>
+          ) : filtered.length === 0 ? (
+            <div className="px-6 py-10 text-center text-sm text-muted-foreground">
+              Nenhuma aplicação corresponde ao filtro.
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -159,9 +178,16 @@ export default function Applications() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {apps.map((app) => (
+                {filtered.map((app) => (
                   <TableRow key={app.id}>
-                    <TableCell className="font-medium">{app.name}</TableCell>
+                    <TableCell className="font-medium">
+                      <Link
+                        to={`/applications/${app.id}`}
+                        className="hover:text-primary hover:underline"
+                      >
+                        {app.name}
+                      </Link>
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="font-mono text-[10px]">
                         {app.tier}
@@ -190,6 +216,12 @@ export default function Applications() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem asChild>
+                            <Link to={`/applications/${app.id}`}>
+                              <Eye className="h-4 w-4" />
+                              Ver detalhes
+                            </Link>
+                          </DropdownMenuItem>
                           <DropdownMenuItem onSelect={() => setEditing(app)}>
                             <Pencil className="h-4 w-4" />
                             Editar
