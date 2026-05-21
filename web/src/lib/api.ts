@@ -39,6 +39,18 @@ interface RequestOpts {
   query?: Record<string, string | number | undefined | null>;
 }
 
+/**
+ * arr — sanitises a list response from the backend.
+ *
+ * Reasoning: Go's `var x []T` is `nil`, which encodes to JSON `null` — and `null`
+ * crashes any `.length` / `.map` in React. Defense in depth: even though every
+ * handler now seeds the slice (Lote A fix), the client coerces null → [] so that
+ * a regression in any single endpoint can't blank-screen the whole page.
+ */
+function arr<T>(v: T[] | null | undefined): T[] {
+  return v ?? [];
+}
+
 async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
   const url = new URL(path, window.location.origin);
   if (opts.query) {
@@ -228,8 +240,8 @@ export const api = {
   },
 
   // Applications
-  listApplications(): Promise<Application[]> {
-    return request("/admin/v1/applications");
+  async listApplications(): Promise<Application[]> {
+    return arr(await request<Application[] | null>("/admin/v1/applications"));
   },
   createApplication(
     input: Omit<Application, "id" | "active" | "created_at" | "updated_at">,
@@ -251,8 +263,8 @@ export const api = {
   rotateKey(id: number): Promise<RotateKeyResponse> {
     return request(`/admin/v1/applications/${id}/rotate-key`, { method: "POST" });
   },
-  listGrants(appId: number): Promise<ProxyEndpoint[]> {
-    return request(`/admin/v1/applications/${appId}/grants`);
+  async listGrants(appId: number): Promise<ProxyEndpoint[]> {
+    return arr(await request<ProxyEndpoint[] | null>(`/admin/v1/applications/${appId}/grants`));
   },
   grantAccess(appId: number, endpointId: number): Promise<void> {
     return request(`/admin/v1/applications/${appId}/grants/${endpointId}`, {
@@ -266,8 +278,8 @@ export const api = {
   },
 
   // Endpoints
-  listEndpoints(): Promise<ProxyEndpoint[]> {
-    return request("/admin/v1/endpoints");
+  async listEndpoints(): Promise<ProxyEndpoint[]> {
+    return arr(await request<ProxyEndpoint[] | null>("/admin/v1/endpoints"));
   },
   createEndpoint(input: {
     slug: string;
@@ -328,8 +340,8 @@ export const api = {
   },
 
   // Users
-  listUsers(): Promise<AdminUser[]> {
-    return request("/admin/v1/users");
+  async listUsers(): Promise<AdminUser[]> {
+    return arr(await request<AdminUser[] | null>("/admin/v1/users"));
   },
   createUser(input: {
     username: string;
@@ -343,27 +355,27 @@ export const api = {
   },
 
   // Observability
-  listUsage(params: {
+  async listUsage(params: {
     from?: string;
     to?: string;
     application?: string;
     limit?: number;
   } = {}): Promise<UsageEvent[]> {
-    return request("/admin/v1/usage", { query: params });
+    return arr(await request<UsageEvent[] | null>("/admin/v1/usage", { query: params }));
   },
-  listAudit(params: {
+  async listAudit(params: {
     from?: string;
     to?: string;
     application?: string;
     event_type?: string;
     limit?: number;
   } = {}): Promise<AuditEvent[]> {
-    return request("/admin/v1/audit", { query: params });
+    return arr(await request<AuditEvent[] | null>("/admin/v1/audit", { query: params }));
   },
-  listBudget(params: {
+  async listBudget(params: {
     period?: string;
     application?: string;
   } = {}): Promise<BudgetCounter[]> {
-    return request("/admin/v1/budget", { query: params });
+    return arr(await request<BudgetCounter[] | null>("/admin/v1/budget", { query: params }));
   },
 };

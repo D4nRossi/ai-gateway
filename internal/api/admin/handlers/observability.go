@@ -185,7 +185,7 @@ func queryUsageEvents(ctx context.Context, pool *pgxpool.Pool, from, to time.Tim
 	}
 	defer rows.Close()
 
-	var result []usageEventRow
+	result := []usageEventRow{}
 	for rows.Next() {
 		var row usageEventRow
 		var createdAt time.Time
@@ -232,7 +232,7 @@ func queryAuditEvents(ctx context.Context, pool *pgxpool.Pool, from, to time.Tim
 	}
 	defer rows.Close()
 
-	var result []auditEventRow
+	result := []auditEventRow{}
 	for rows.Next() {
 		var row auditEventRow
 		var createdAt time.Time
@@ -271,7 +271,7 @@ func queryBudget(ctx context.Context, pool *pgxpool.Pool, period, app string) ([
 	}
 	defer rows.Close()
 
-	var result []budgetRow
+	result := []budgetRow{}
 	for rows.Next() {
 		var row budgetRow
 		var updatedAt time.Time
