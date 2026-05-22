@@ -390,7 +390,13 @@ function EndpointFormDialog({
         if (!o) onClose();
       }}
     >
-      <DialogContent className="max-w-4xl">
+      {/* Modal grande: usa style inline pra evitar guerra de specificity com
+          o sm:max-w-lg que vive no DialogContent. min(1100px, 95vw) garante
+          modal amplo em desktop sem encostar nas bordas em viewport pequena. */}
+      <DialogContent
+        className="max-w-none sm:max-w-none"
+        style={{ width: "min(1100px, 95vw)", maxWidth: "min(1100px, 95vw)" }}
+      >
         <DialogHeader>
           <DialogTitle>{existing ? "Editar endpoint" : "Novo endpoint"}</DialogTitle>
           <DialogDescription>

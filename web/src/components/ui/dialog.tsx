@@ -33,13 +33,17 @@ const DialogContent = React.forwardRef<
       ref={ref}
       className={cn(
         // Layout: centered, viewport-aware. max-h + overflow-y permitem rolar
-        // o conteúdo quando o modal é alto (form de endpoint + ProviderHelp +
-        // grids). overflow-x-hidden é a segunda linha de defesa contra
+        // o conteúdo quando o modal é alto. overflow-x-hidden é defesa contra
         // conteúdo (URLs longas, <pre>) que escaparia horizontalmente — os
-        // componentes filhos devem usar min-w-0 + truncate, mas se algum
-        // esquecer, o modal não vaza pra fora da viewport.
+        // componentes filhos devem usar min-w-0 + truncate/break-all, mas se
+        // algum esquecer, o modal não vaza pra fora da viewport.
+        //
+        // max-w base é `lg` (sem responsive variant). Quem precisa de modal
+        // maior passa `max-w-XYZ` no className (ou style inline pra sobrescrever
+        // sem batalhar com tailwind-merge). Limite duro: 95vw na largura mínima
+        // calc(100vw-2rem) para sempre ter respiro nas bordas em mobile.
         "fixed left-[50%] top-[50%] z-50 grid translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-card/95 p-6 shadow-2xl shadow-black/50 backdrop-blur-md duration-200",
-        "w-full max-w-[calc(100vw-2rem)] sm:max-w-lg",
+        "w-full max-w-[min(32rem,calc(100vw-2rem))]",
         "max-h-[90vh] overflow-y-auto overflow-x-hidden",
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
         className,

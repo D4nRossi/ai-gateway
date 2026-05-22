@@ -7,22 +7,28 @@ import { toast } from "@/components/ui/sonner";
 
 interface Props {
   kind: ProviderKind;
-  /** Slug do endpoint (preview do path final no proxy). Se vazio, mostra {slug}. */
+  /** Slug do endpoint (preview do path final). Vazio → mostra {slug}. */
   slug?: string;
 }
 
 /**
  * ProviderHelp — bloco "Como usar" exibido no form de endpoint.
  *
- * Constraints visuais críticas (resolvem bug reportado 2026-05-22 — URLs
- * Azure vazando do modal):
+ * Pattern de não-vazamento (lições do bug 2026-05-22):
  *
- *   - O Alert é flex container vertical; conteúdo precisa de min-w-0 para
- *     que filhos truncate consigam encolher abaixo do tamanho natural
- *   - <pre> do request usa whitespace-pre-wrap + break-all em vez de scroll-x;
- *     URLs longas quebram em qualquer caractere, evitando bandeira horizontal
- *   - Cada URL na lista é um flex row com span truncate + botão copy;
- *     truncate na span requer min-w-0 no irmão flex
+ *   - Toda string longa usa `break-all` (quebra em qualquer char). Sem
+ *     truncate, sem ellipsis: o texto fica visível em múltiplas linhas.
+ *     Essa decisão prioriza legibilidade sobre estética — em telas
+ *     estreitas, ver a URL inteira embolada é melhor do que ver "..." e
+ *     ter que passar o mouse para descobrir.
+ *
+ *   - `<pre>` recebe `whitespace-pre-wrap break-all` para que o exemplo do
+ *     request quebre em qualquer caractere quando estreito, em vez de
+ *     forçar scroll horizontal que estoura o modal pai.
+ *
+ *   - Containers raiz têm `min-w-0` para que filhos `break-all` consigam
+ *     encolher abaixo do tamanho natural (CSS flex item default tem
+ *     `min-width: auto`, que é o tamanho do conteúdo).
  */
 export function ProviderHelp({ kind, slug }: Props) {
   const meta = providerMeta(kind);
@@ -49,66 +55,73 @@ export function ProviderHelp({ kind, slug }: Props) {
       </button>
 
       {open && (
-        <Alert className="min-w-0 overflow-hidden">
+        <Alert className="min-w-0 max-w-full overflow-hidden">
           <AlertTitle className="text-sm">
             Como cadastrar e como o consumer faz request — {meta.label}
           </AlertTitle>
-          <AlertDescription className="space-y-3 text-xs">
+          <AlertDescription className="space-y-4 text-xs">
             {meta.exampleURLs && meta.exampleURLs.length > 0 && (
-              <div className="min-w-0">
-                <p className="mb-1 font-medium text-foreground/90">
+              <section className="min-w-0">
+                <p className="mb-2 font-medium text-foreground/90">
                   URL upstream (cole no campo URL do target):
                 </p>
-                <ul className="space-y-1">
+                <ul className="space-y-1.5">
                   {meta.exampleURLs.map((url) => (
-                    <li
-                      key={url}
-                      className="flex min-w-0 items-center gap-2 overflow-hidden rounded border border-border bg-background/60 px-2 py-1 font-mono text-[11px]"
-                    >
-                      <CopyableText text={url} />
+                    <li key={url}>
+                      <UrlLine text={url} />
                     </li>
                   ))}
                 </ul>
-              </div>
+              </section>
             )}
 
             {meta.requestExample && (
-              <div className="min-w-0">
-                <p className="mb-1 font-medium text-foreground/90">
+              <section className="min-w-0">
+                <p className="mb-2 font-medium text-foreground/90">
                   Request do consumer (via gateway):
                 </p>
-                <pre className="min-w-0 max-w-full whitespace-pre-wrap break-all rounded border border-border bg-background/60 p-2 font-mono text-[11px] leading-relaxed">
-                  <span className="text-emerald-400">{meta.requestExample.method}</span>{" "}
-                  {requestPath}
-                  <br />
-                  <span className="text-muted-foreground">Authorization:</span>{" "}
-                  <span className="text-amber-300">Bearer gwk_{"{prefix}_{secret}"}</span>
-                  <br />
-                  <span className="text-muted-foreground">Content-Type:</span> application/json
+                <div className="space-y-2 rounded border border-border bg-background/60 p-3 font-mono text-[11px]">
+                  <div className="min-w-0">
+                    <span className="font-semibold text-emerald-400">
+                      {meta.requestExample.method}
+                    </span>{" "}
+                    <span className="break-all">{requestPath}</span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-muted-foreground">Authorization:</span>{" "}
+                    <span className="break-all text-amber-300">
+                      Bearer gwk_{"{prefix}_{secret}"}
+                    </span>
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-muted-foreground">Content-Type:</span>{" "}
+                    application/json
+                  </div>
                   {meta.requestExample.body && (
-                    <>
-                      {"\n\n"}
+                    <pre className="mt-2 min-w-0 max-w-full whitespace-pre-wrap break-all border-t border-border pt-2 leading-relaxed">
                       {meta.requestExample.body}
-                    </>
+                    </pre>
                   )}
-                </pre>
-                <p className="mt-1 text-[10px] text-muted-foreground">
+                </div>
+                <p className="mt-1.5 text-[10px] text-muted-foreground">
                   O gateway aceita o token <code>gwk_…</code> da aplicação e injeta
                   a chave do upstream automaticamente; o cliente nunca vê a
                   credencial real.
                 </p>
-              </div>
+              </section>
             )}
 
             {meta.requestExample?.notes && meta.requestExample.notes.length > 0 && (
-              <div>
+              <section>
                 <p className="mb-1 font-medium text-foreground/90">Notas:</p>
                 <ul className="list-disc space-y-0.5 pl-4">
                   {meta.requestExample.notes.map((n) => (
-                    <li key={n}>{n}</li>
+                    <li key={n} className="break-words">
+                      {n}
+                    </li>
                   ))}
                 </ul>
-              </div>
+              </section>
             )}
 
             {meta.docs && (
@@ -129,13 +142,11 @@ export function ProviderHelp({ kind, slug }: Props) {
 }
 
 /**
- * CopyableText — span com truncate + botão copy.
- *
- * O span TEM que ter min-w-0 (não basta o flex-1) porque o conteúdo mínimo
- * dele é a string completa da URL — sem min-w-0 ele se recusa a encolher
- * abaixo desse mínimo e estoura o container.
+ * UrlLine — exibe uma URL longa em uma linha com botão de copiar. `break-all`
+ * garante que URLs gigantes (Azure deploy names) fiquem visíveis quebrando
+ * em múltiplas linhas em vez de cortar com elipse.
  */
-function CopyableText({ text }: { text: string }) {
+function UrlLine({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -148,10 +159,10 @@ function CopyableText({ text }: { text: string }) {
     }
   }
   return (
-    <>
-      <span className="min-w-0 flex-1 truncate" title={text}>
+    <div className="flex min-w-0 items-start gap-2 rounded border border-border bg-background/60 px-2 py-1.5">
+      <code className="min-w-0 flex-1 break-all font-mono text-[11px] text-foreground/90">
         {text}
-      </span>
+      </code>
       <Button
         type="button"
         variant="ghost"
@@ -162,6 +173,6 @@ function CopyableText({ text }: { text: string }) {
       >
         {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
       </Button>
-    </>
+    </div>
   );
 }

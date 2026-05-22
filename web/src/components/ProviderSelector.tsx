@@ -23,11 +23,19 @@ interface Props {
  */
 export function ProviderSelector({ value, onChange, disabled }: Props) {
   return (
-    // grid responsivo + items-stretch (default) garante alturas uniformes por linha.
-    // min-w-0 + overflow-hidden no botão + truncate na URL é o pattern padrão
-    // pra evitar que conteúdo longo (URLs do Gemini/Azure) estoure a célula
-    // — bug reportado em 2026-05-22 (cards "vazando" o texto pra fora).
-    <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    // `auto-fill, minmax(180px, 1fr)` adapta colunas ao CONTAINER (não ao
+    // viewport do browser). Isso resolve o caso do modal: dentro de um modal
+    // de 600px, vão caber 3 colunas; dentro de um modal de 1100px, 6 colunas.
+    // Os breakpoints sm:/lg:/xl: do Tailwind não enxergam o container, então
+    // não dão pra usar aqui sem container-queries plugin.
+    //
+    // Bug histórico (2026-05-22): viewport 1280px com modal de 600px aplicava
+    // xl:grid-cols-4 e o conteúdo estourava. Esta solução elimina o problema
+    // por completo.
+    <div
+      className="grid w-full gap-2"
+      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}
+    >
       {PROVIDER_LIST.map((p) => {
         const selected = p.kind === value;
         return (
