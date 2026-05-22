@@ -23,7 +23,11 @@ interface Props {
  */
 export function ProviderSelector({ value, onChange, disabled }: Props) {
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+    // grid responsivo + items-stretch (default) garante alturas uniformes por linha.
+    // min-w-0 + overflow-hidden no botão + truncate na URL é o pattern padrão
+    // pra evitar que conteúdo longo (URLs do Gemini/Azure) estoure a célula
+    // — bug reportado em 2026-05-22 (cards "vazando" o texto pra fora).
+    <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {PROVIDER_LIST.map((p) => {
         const selected = p.kind === value;
         return (
@@ -33,7 +37,7 @@ export function ProviderSelector({ value, onChange, disabled }: Props) {
             onClick={() => onChange(p.kind)}
             disabled={disabled}
             className={cn(
-              "group relative flex flex-col items-start gap-1.5 rounded-md border p-3 text-left transition-all",
+              "group relative flex h-full min-w-0 flex-col items-start gap-1.5 overflow-hidden rounded-md border p-3 text-left transition-all",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               "disabled:cursor-not-allowed disabled:opacity-50",
               selected
@@ -42,23 +46,26 @@ export function ProviderSelector({ value, onChange, disabled }: Props) {
             )}
             aria-pressed={selected}
           >
-            <div className="flex w-full items-center justify-between gap-2">
+            <div className="flex w-full min-w-0 items-center justify-between gap-2">
               <span
                 className={cn(
-                  "inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+                  "inline-flex max-w-full items-center gap-1.5 rounded-md border px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide",
                   providerBadgeClass(p.kind),
                 )}
               >
-                {p.kind === "custom" && <Sparkles className="h-3 w-3" />}
-                {p.label}
+                {p.kind === "custom" && <Sparkles className="h-3 w-3 shrink-0" />}
+                <span className="truncate">{p.label}</span>
               </span>
-              {selected && <Check className="h-4 w-4 text-primary" />}
+              {selected && <Check className="h-4 w-4 shrink-0 text-primary" />}
             </div>
-            <p className="text-[11px] leading-snug text-muted-foreground">
+            <p className="line-clamp-2 w-full text-[11px] leading-snug text-muted-foreground">
               {p.tagline}
             </p>
             {p.baseURL && (
-              <p className="mt-1 truncate font-mono text-[10px] text-muted-foreground/70">
+              <p
+                className="mt-auto block w-full truncate font-mono text-[10px] text-muted-foreground/70"
+                title={p.baseURL}
+              >
                 {p.baseURL}
               </p>
             )}

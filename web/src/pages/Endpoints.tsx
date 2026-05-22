@@ -52,7 +52,14 @@ import { toast } from "@/components/ui/sonner";
 import { DataTableToolbar } from "@/components/DataTableToolbar";
 import { ProviderSelector, ProviderBadge } from "@/components/ProviderSelector";
 import { ProviderHelp } from "@/components/ProviderHelp";
-import { api, errMessage, type LBStrategy, type ProviderKind, type ProxyEndpoint } from "@/lib/api";
+import {
+  api,
+  errMessage,
+  errToast,
+  type LBStrategy,
+  type ProviderKind,
+  type ProxyEndpoint,
+} from "@/lib/api";
 import { PROVIDERS } from "@/lib/providers";
 import { filterByText } from "@/lib/filter";
 import { formatDateTime, formatNumber } from "@/lib/utils";
@@ -370,7 +377,7 @@ function EndpointFormDialog({
       }
       onSaved();
     } catch (err) {
-      toast.error(errMessage(err, "Falha ao salvar"));
+      toast.error(...errToast(err, "Falha ao salvar"));
     } finally {
       setSubmitting(false);
     }
@@ -383,7 +390,7 @@ function EndpointFormDialog({
         if (!o) onClose();
       }}
     >
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>{existing ? "Editar endpoint" : "Novo endpoint"}</DialogTitle>
           <DialogDescription>

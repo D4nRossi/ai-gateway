@@ -52,7 +52,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
 import { DataTableToolbar } from "@/components/DataTableToolbar";
-import { api, errMessage, type Application, type Tier } from "@/lib/api";
+import { api, errMessage, errToast, type Application, type Tier } from "@/lib/api";
 import { filterByText } from "@/lib/filter";
 import { formatBRL, formatDateTime, formatNumber } from "@/lib/utils";
 
@@ -404,7 +404,7 @@ function ApplicationFormDialog({
         onCreated(created, created.token);
       }
     } catch (err) {
-      toast.error(errMessage(err, "Falha ao salvar"));
+      toast.error(...errToast(err, "Falha ao salvar"));
     } finally {
       setSubmitting(false);
     }

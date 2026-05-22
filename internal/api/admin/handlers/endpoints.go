@@ -184,6 +184,10 @@ func CreateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 				writeAdminError(w, http.StatusBadRequest, "invalid_provider", "provider_kind inválido")
 				return
 			}
+			if status, code, msg, details, ok := translatePgError(err); ok {
+				writeAdminErrorWithDetails(w, status, code, msg, details)
+				return
+			}
 			writeAdminErrorWithDetails(
 				w, http.StatusInternalServerError,
 				"internal", "falha ao criar endpoint", err.Error(),
@@ -251,6 +255,10 @@ func UpdateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 			}
 			if errors.Is(err, adminservice.ErrInvalidProvider) {
 				writeAdminError(w, http.StatusBadRequest, "invalid_provider", "provider_kind inválido")
+				return
+			}
+			if status, code, msg, details, ok := translatePgError(err); ok {
+				writeAdminErrorWithDetails(w, status, code, msg, details)
 				return
 			}
 			writeAdminErrorWithDetails(

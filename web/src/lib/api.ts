@@ -71,6 +71,28 @@ export function errMessage(err: unknown, fallback = "Falha inesperada"): string 
   return fallback;
 }
 
+/**
+ * errToast — extrai título e descrição opcional para usar com toast.error().
+ * Quando o backend devolve `details`, usamos a mensagem curta como título e os
+ * detalhes (causa raiz, normalmente Postgres) como description — o sonner
+ * renderiza isso em duas linhas, evitando truncar.
+ *
+ * Uso: toast.error(...errToast(err, "Falha ao criar"));
+ *      → toast.error("Falha ao criar", { description: "..." })
+ */
+export function errToast(
+  err: unknown,
+  fallback = "Falha inesperada",
+): [string, { description?: string }] {
+  if (err instanceof ApiError) {
+    return [err.message || fallback, err.details ? { description: err.details } : {}];
+  }
+  if (err instanceof Error) {
+    return [err.message || fallback, {}];
+  }
+  return [fallback, {}];
+}
+
 async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
   const url = new URL(path, window.location.origin);
   if (opts.query) {

@@ -139,7 +139,14 @@ func CreateApplication(svc *adminservice.Service) http.HandlerFunc {
 
 		created, rawToken, err := svc.CreateApplication(r.Context(), app)
 		if err != nil {
-			writeAdminError(w, http.StatusInternalServerError, "internal", "failed to create application")
+			if status, code, msg, details, ok := translatePgError(err); ok {
+				writeAdminErrorWithDetails(w, status, code, msg, details)
+				return
+			}
+			writeAdminErrorWithDetails(
+				w, http.StatusInternalServerError,
+				"internal", "falha ao criar aplicação", err.Error(),
+			)
 			return
 		}
 
@@ -216,10 +223,17 @@ func UpdateApplication(svc *adminservice.Service) http.HandlerFunc {
 		updated, err := svc.UpdateApplication(r.Context(), app)
 		if err != nil {
 			if errors.Is(err, application.ErrNotFound) {
-				writeAdminError(w, http.StatusNotFound, "not_found", "application not found")
+				writeAdminError(w, http.StatusNotFound, "not_found", "aplicação não encontrada")
 				return
 			}
-			writeAdminError(w, http.StatusInternalServerError, "internal", "failed to update application")
+			if status, code, msg, details, ok := translatePgError(err); ok {
+				writeAdminErrorWithDetails(w, status, code, msg, details)
+				return
+			}
+			writeAdminErrorWithDetails(
+				w, http.StatusInternalServerError,
+				"internal", "falha ao atualizar aplicação", err.Error(),
+			)
 			return
 		}
 

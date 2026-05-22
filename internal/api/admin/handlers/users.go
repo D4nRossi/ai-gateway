@@ -80,7 +80,14 @@ func CreateUser(svc *adminservice.Service) http.HandlerFunc {
 
 		user, err := svc.CreateAdminUser(r.Context(), req.Username, req.Password, role)
 		if err != nil {
-			writeAdminError(w, http.StatusInternalServerError, "internal", "failed to create user")
+			if status, code, msg, details, ok := translatePgError(err); ok {
+				writeAdminErrorWithDetails(w, status, code, msg, details)
+				return
+			}
+			writeAdminErrorWithDetails(
+				w, http.StatusInternalServerError,
+				"internal", "falha ao criar usuário", err.Error(),
+			)
 			return
 		}
 
