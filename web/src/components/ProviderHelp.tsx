@@ -14,15 +14,15 @@ interface Props {
 /**
  * ProviderHelp — bloco "Como usar" exibido no form de endpoint.
  *
- * Mostra três coisas pro operador entender o cadastro:
- *   1. Exemplos reais de URL upstream pra esse provider
- *      (Azure tem N URLs — uma por deploy; OpenAI/Anthropic têm uma só)
- *   2. Exemplo de request final que o consumer vai fazer via gateway
- *      (com o slug substituído quando já existir)
- *   3. Notas específicas do provider (versões de API, formatos diferentes, etc.)
+ * Constraints visuais críticas (resolvem bug reportado 2026-05-22 — URLs
+ * Azure vazando do modal):
  *
- * O bloco fica colapsado por padrão pra não poluir o form; o operador
- * expande quando precisa.
+ *   - O Alert é flex container vertical; conteúdo precisa de min-w-0 para
+ *     que filhos truncate consigam encolher abaixo do tamanho natural
+ *   - <pre> do request usa whitespace-pre-wrap + break-all em vez de scroll-x;
+ *     URLs longas quebram em qualquer caractere, evitando bandeira horizontal
+ *   - Cada URL na lista é um flex row com span truncate + botão copy;
+ *     truncate na span requer min-w-0 no irmão flex
  */
 export function ProviderHelp({ kind, slug }: Props) {
   const meta = providerMeta(kind);
@@ -38,7 +38,7 @@ export function ProviderHelp({ kind, slug }: Props) {
     : "";
 
   return (
-    <div className="space-y-2">
+    <div className="min-w-0 space-y-2">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -49,13 +49,13 @@ export function ProviderHelp({ kind, slug }: Props) {
       </button>
 
       {open && (
-        <Alert>
+        <Alert className="min-w-0 overflow-hidden">
           <AlertTitle className="text-sm">
             Como cadastrar e como o consumer faz request — {meta.label}
           </AlertTitle>
           <AlertDescription className="space-y-3 text-xs">
             {meta.exampleURLs && meta.exampleURLs.length > 0 && (
-              <div>
+              <div className="min-w-0">
                 <p className="mb-1 font-medium text-foreground/90">
                   URL upstream (cole no campo URL do target):
                 </p>
@@ -63,7 +63,7 @@ export function ProviderHelp({ kind, slug }: Props) {
                   {meta.exampleURLs.map((url) => (
                     <li
                       key={url}
-                      className="flex items-center gap-2 rounded border border-border bg-background/60 px-2 py-1 font-mono text-[11px]"
+                      className="flex min-w-0 items-center gap-2 overflow-hidden rounded border border-border bg-background/60 px-2 py-1 font-mono text-[11px]"
                     >
                       <CopyableText text={url} />
                     </li>
@@ -73,11 +73,11 @@ export function ProviderHelp({ kind, slug }: Props) {
             )}
 
             {meta.requestExample && (
-              <div>
+              <div className="min-w-0">
                 <p className="mb-1 font-medium text-foreground/90">
                   Request do consumer (via gateway):
                 </p>
-                <pre className="overflow-x-auto rounded border border-border bg-background/60 p-2 font-mono text-[11px] leading-relaxed">
+                <pre className="min-w-0 max-w-full whitespace-pre-wrap break-all rounded border border-border bg-background/60 p-2 font-mono text-[11px] leading-relaxed">
                   <span className="text-emerald-400">{meta.requestExample.method}</span>{" "}
                   {requestPath}
                   <br />
@@ -87,8 +87,7 @@ export function ProviderHelp({ kind, slug }: Props) {
                   <span className="text-muted-foreground">Content-Type:</span> application/json
                   {meta.requestExample.body && (
                     <>
-                      <br />
-                      <br />
+                      {"\n\n"}
                       {meta.requestExample.body}
                     </>
                   )}
@@ -129,6 +128,13 @@ export function ProviderHelp({ kind, slug }: Props) {
   );
 }
 
+/**
+ * CopyableText — span com truncate + botão copy.
+ *
+ * O span TEM que ter min-w-0 (não basta o flex-1) porque o conteúdo mínimo
+ * dele é a string completa da URL — sem min-w-0 ele se recusa a encolher
+ * abaixo desse mínimo e estoura o container.
+ */
 function CopyableText({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
@@ -143,12 +149,14 @@ function CopyableText({ text }: { text: string }) {
   }
   return (
     <>
-      <span className="flex-1 truncate">{text}</span>
+      <span className="min-w-0 flex-1 truncate" title={text}>
+        {text}
+      </span>
       <Button
         type="button"
         variant="ghost"
         size="icon"
-        className="h-6 w-6"
+        className="h-6 w-6 shrink-0"
         onClick={copy}
         title="Copiar"
       >

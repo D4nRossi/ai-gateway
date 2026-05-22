@@ -34,11 +34,13 @@ const DialogContent = React.forwardRef<
       className={cn(
         // Layout: centered, viewport-aware. max-h + overflow-y permitem rolar
         // o conteúdo quando o modal é alto (form de endpoint + ProviderHelp +
-        // grids). Em telas <= sm, max-w-[calc(100vw-2rem)] mantém respiro nas
-        // bordas; em sm+, max-w-lg (sobrescrevível via className).
+        // grids). overflow-x-hidden é a segunda linha de defesa contra
+        // conteúdo (URLs longas, <pre>) que escaparia horizontalmente — os
+        // componentes filhos devem usar min-w-0 + truncate, mas se algum
+        // esquecer, o modal não vaza pra fora da viewport.
         "fixed left-[50%] top-[50%] z-50 grid translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-card/95 p-6 shadow-2xl shadow-black/50 backdrop-blur-md duration-200",
         "w-full max-w-[calc(100vw-2rem)] sm:max-w-lg",
-        "max-h-[90vh] overflow-y-auto",
+        "max-h-[90vh] overflow-y-auto overflow-x-hidden",
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
         className,
       )}

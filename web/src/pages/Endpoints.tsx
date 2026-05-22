@@ -390,7 +390,7 @@ function EndpointFormDialog({
         if (!o) onClose();
       }}
     >
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>{existing ? "Editar endpoint" : "Novo endpoint"}</DialogTitle>
           <DialogDescription>
