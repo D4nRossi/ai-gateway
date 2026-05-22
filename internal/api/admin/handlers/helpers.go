@@ -26,9 +26,14 @@ type apiError struct {
 }
 
 // apiErrorDetail carries a machine-readable code and a human-readable message.
+// Details is filled only for diagnostic 500 responses — it surfaces the
+// underlying root cause (e.g. PostgreSQL constraint message) so an operator
+// inside the admin UI does not need to dig through server logs to know why
+// a CRUD call failed. The field is omitted from the JSON when empty.
 type apiErrorDetail struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`
+	Details string `json:"details,omitempty"`
 }
 
 // writeJSON serialises v as JSON and writes it with the given HTTP status code.
@@ -49,6 +54,15 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeAdminError writes a standardised JSON error response.
 func writeAdminError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, apiError{Error: apiErrorDetail{Code: code, Message: message}})
+}
+
+// writeAdminErrorWithDetails writes a JSON error response that carries the
+// root cause in the `details` field. Use only for internal/500 errors where
+// surfacing the cause helps the operator triage. Never include secrets or
+// PII — call sites should pass a sanitized err.Error() (which for pgx errors
+// is the PostgreSQL SQLSTATE + message, never the bound parameters).
+func writeAdminErrorWithDetails(w http.ResponseWriter, status int, code, message, details string) {
+	writeJSON(w, status, apiError{Error: apiErrorDetail{Code: code, Message: message, Details: details}})
 }
 
 // parseID reads the named chi URL parameter and parses it as int64.

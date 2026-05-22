@@ -18,6 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "@/components/ui/sonner";
 import {
   api,
+  errMessage,
   type AuditEvent,
   type BudgetCounter,
   type UsageEvent,
@@ -94,7 +95,7 @@ function UsageTab() {
     try {
       setRows(await api.listUsage({ from, to, application: app || undefined, limit: 200 }));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao carregar uso");
+      toast.error(errMessage(err, "Falha ao carregar uso"));
     } finally {
       setLoading(false);
     }
@@ -197,7 +198,7 @@ function AuditTab() {
         }),
       );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao carregar auditoria");
+      toast.error(errMessage(err, "Falha ao carregar auditoria"));
     } finally {
       setLoading(false);
     }
@@ -285,7 +286,7 @@ function BudgetTab() {
     try {
       setRows(await api.listBudget({ period }));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao carregar budget");
+      toast.error(errMessage(err, "Falha ao carregar budget"));
     } finally {
       setLoading(false);
     }

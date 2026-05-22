@@ -52,6 +52,7 @@ import { ProviderBadge } from "@/components/ProviderSelector";
 import {
   api,
   ApiError,
+  errMessage,
   type Application,
   type AuthType,
   type ProxyEndpoint,
@@ -81,7 +82,7 @@ export default function EndpointDetail() {
         navigate("/endpoints", { replace: true });
         return;
       }
-      toast.error(err instanceof Error ? err.message : "Falha ao carregar endpoint");
+      toast.error(errMessage(err, "Falha ao carregar endpoint"));
     } finally {
       setLoading(false);
     }
@@ -203,7 +204,7 @@ export default function EndpointDetail() {
                   toast.success("Endpoint desativado");
                   navigate("/endpoints", { replace: true });
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Falha ao desativar");
+                  toast.error(errMessage(err, "Falha ao desativar"));
                 }
               }}
             >
@@ -443,7 +444,7 @@ function TargetsPanel({
                   setRemoving(null);
                   onChanged();
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Falha ao remover");
+                  toast.error(errMessage(err, "Falha ao remover"));
                 }
               }}
             >
@@ -513,7 +514,7 @@ function TargetFormDialog({
       }
       onSaved();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao salvar");
+      toast.error(errMessage(err, "Falha ao salvar"));
     } finally {
       setSubmitting(false);
     }
@@ -706,7 +707,7 @@ function GrantsPanel({ endpointId }: { endpointId: number }) {
       }
       setGranted(next);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao carregar grants");
+      toast.error(errMessage(e, "Falha ao carregar grants"));
     } finally {
       setLoading(false);
     }
@@ -739,7 +740,7 @@ function GrantsPanel({ endpointId }: { endpointId: number }) {
         toast.success("Acesso concedido");
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao alterar acesso");
+      toast.error(errMessage(e, "Falha ao alterar acesso"));
     }
   }
 

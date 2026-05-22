@@ -6,6 +6,7 @@ import {
   Users as UsersIcon,
   Activity,
   Sparkles,
+  Play,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useSession } from "@/lib/useAuth";
@@ -24,6 +25,7 @@ const items: NavItem[] = [
   { to: "/endpoints", label: "Endpoints", icon: Network, requireRole: "operator" },
   { to: "/users", label: "Usuários", icon: UsersIcon, requireRole: "admin" },
   { to: "/observability", label: "Observabilidade", icon: Activity, requireRole: "viewer" },
+  { to: "/playground", label: "Playground", icon: Play, requireRole: "operator" },
 ];
 
 const RANK = { viewer: 0, operator: 1, admin: 2 } as const;

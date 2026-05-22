@@ -38,6 +38,7 @@ import { toast } from "@/components/ui/sonner";
 import {
   api,
   ApiError,
+  errMessage,
   type Application,
   type AuditEvent,
   type ProxyEndpoint,
@@ -67,7 +68,7 @@ export default function ApplicationDetail() {
         navigate("/applications", { replace: true });
         return;
       }
-      toast.error(err instanceof Error ? err.message : "Falha ao carregar aplicação");
+      toast.error(errMessage(err, "Falha ao carregar aplicação"));
     } finally {
       setLoading(false);
     }
@@ -190,7 +191,7 @@ export default function ApplicationDetail() {
                   setConfirmRotate(false);
                   toast.success("Chave rotacionada");
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Falha ao rotacionar");
+                  toast.error(errMessage(err, "Falha ao rotacionar"));
                 }
               }}
             >
@@ -221,7 +222,7 @@ export default function ApplicationDetail() {
                   toast.success("Aplicação desativada");
                   navigate("/applications", { replace: true });
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Falha ao desativar");
+                  toast.error(errMessage(err, "Falha ao desativar"));
                 }
               }}
             >
@@ -309,7 +310,7 @@ function UsagePanel({ appName }: { appName: string }) {
       .listUsage({ application: appName, limit: 100 })
       .then(setRows)
       .catch((e) =>
-        toast.error(e instanceof Error ? e.message : "Falha ao carregar uso"),
+        toast.error(errMessage(e, "Falha ao carregar uso")),
       )
       .finally(() => setLoading(false));
   }, [appName]);
@@ -380,7 +381,7 @@ function AuditPanel({ appName }: { appName: string }) {
       .listAudit({ application: appName, limit: 100 })
       .then(setRows)
       .catch((e) =>
-        toast.error(e instanceof Error ? e.message : "Falha ao carregar auditoria"),
+        toast.error(errMessage(e, "Falha ao carregar auditoria")),
       )
       .finally(() => setLoading(false));
   }, [appName]);
@@ -452,7 +453,7 @@ function GrantsPanel({ appId }: { appId: number }) {
       setAllEndpoints(eps);
       setGranted(new Set(gs.map((g) => g.id)));
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao carregar acessos");
+      toast.error(errMessage(e, "Falha ao carregar acessos"));
     } finally {
       setLoading(false);
     }
@@ -488,7 +489,7 @@ function GrantsPanel({ appId }: { appId: number }) {
         toast.success("Acesso concedido");
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Falha ao alterar acesso");
+      toast.error(errMessage(e, "Falha ao alterar acesso"));
     } finally {
       setPendingId(null);
     }

@@ -10,6 +10,7 @@ import Endpoints from "./pages/Endpoints";
 import EndpointDetail from "./pages/EndpointDetail";
 import Users from "./pages/Users";
 import Observability from "./pages/Observability";
+import Playground from "./pages/Playground";
 
 export default function App() {
   return (
@@ -34,6 +35,7 @@ export default function App() {
           <Route path="/endpoints/:id" element={<EndpointDetail />} />
           <Route path="/users" element={<Users requireAdmin />} />
           <Route path="/observability" element={<Observability />} />
+          <Route path="/playground" element={<Playground />} />
         </Route>
 
         {/* Fallback */}

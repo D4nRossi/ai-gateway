@@ -32,7 +32,14 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-[50%] top-[50%] z-50 grid w-full max-w-lg translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-card/95 p-6 shadow-2xl shadow-black/50 backdrop-blur-md duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
+        // Layout: centered, viewport-aware. max-h + overflow-y permitem rolar
+        // o conteúdo quando o modal é alto (form de endpoint + ProviderHelp +
+        // grids). Em telas <= sm, max-w-[calc(100vw-2rem)] mantém respiro nas
+        // bordas; em sm+, max-w-lg (sobrescrevível via className).
+        "fixed left-[50%] top-[50%] z-50 grid translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-card/95 p-6 shadow-2xl shadow-black/50 backdrop-blur-md duration-200",
+        "w-full max-w-[calc(100vw-2rem)] sm:max-w-lg",
+        "max-h-[90vh] overflow-y-auto",
+        "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
         className,
       )}
       {...props}

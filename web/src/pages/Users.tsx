@@ -37,7 +37,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
-import { api, type AdminUser } from "@/lib/api";
+import { api, errMessage, type AdminUser } from "@/lib/api";
 import { formatDateTime } from "@/lib/utils";
 import { useSession } from "@/lib/useAuth";
 
@@ -63,7 +63,7 @@ export default function Users({ requireAdmin }: Props) {
     try {
       setUsers(await api.listUsers());
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao carregar usuários");
+      toast.error(errMessage(err, "Falha ao carregar usuários"));
     } finally {
       setLoading(false);
     }
@@ -191,7 +191,7 @@ export default function Users({ requireAdmin }: Props) {
                   setConfirmDeactivate(null);
                   void refresh();
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Falha ao desativar");
+                  toast.error(errMessage(err, "Falha ao desativar"));
                 }
               }}
             >
@@ -234,7 +234,7 @@ function CreateUserDialog({
       toast.success("Usuário criado");
       onCreated();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao criar usuário");
+      toast.error(errMessage(err, "Falha ao criar usuário"));
     } finally {
       setSubmitting(false);
     }

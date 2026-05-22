@@ -15,18 +15,26 @@
 import { getSession, clearSession } from "./auth";
 
 export interface ApiErrorBody {
-  error: { code: string; message: string };
+  error: { code: string; message: string; details?: string };
 }
 
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /** Raiz da falha (geralmente erro do PostgreSQL/pgx); só populado em 500. */
+  readonly details?: string;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, details?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
     this.code = code;
+    this.details = details;
+  }
+
+  /** Versão amigável: mensagem + detalhes quando existirem. */
+  fullMessage(): string {
+    return this.details ? `${this.message} — ${this.details}` : this.message;
   }
 }
 
@@ -49,6 +57,18 @@ interface RequestOpts {
  */
 function arr<T>(v: T[] | null | undefined): T[] {
   return v ?? [];
+}
+
+/**
+ * errMessage — extrai a mensagem mais informativa possível de um erro.
+ * Para ApiError, junta a mensagem traduzida (pt-BR) com o `details` do
+ * backend (causa raiz, geralmente erro do Postgres). Para erros nativos,
+ * retorna `.message`. Fallback genérico quando nada disso bate.
+ */
+export function errMessage(err: unknown, fallback = "Falha inesperada"): string {
+  if (err instanceof ApiError) return err.fullMessage();
+  if (err instanceof Error) return err.message;
+  return fallback;
 }
 
 async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
@@ -95,13 +115,14 @@ async function request<T>(path: string, opts: RequestOpts = {}): Promise<T> {
     const code = errBody?.error?.code ?? "unknown";
     const message =
       errBody?.error?.message ?? `request failed with status ${res.status}`;
+    const details = errBody?.error?.details;
 
     if (res.status === 401 && !opts.skipAuth) {
       // Token rejected — wipe local session so the guard kicks the user to login.
       clearSession();
     }
 
-    throw new ApiError(res.status, code, message);
+    throw new ApiError(res.status, code, message, details);
   }
 
   return parsed as T;

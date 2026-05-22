@@ -51,7 +51,8 @@ import {
 import { toast } from "@/components/ui/sonner";
 import { DataTableToolbar } from "@/components/DataTableToolbar";
 import { ProviderSelector, ProviderBadge } from "@/components/ProviderSelector";
-import { api, type LBStrategy, type ProviderKind, type ProxyEndpoint } from "@/lib/api";
+import { ProviderHelp } from "@/components/ProviderHelp";
+import { api, errMessage, type LBStrategy, type ProviderKind, type ProxyEndpoint } from "@/lib/api";
 import { PROVIDERS } from "@/lib/providers";
 import { filterByText } from "@/lib/filter";
 import { formatDateTime, formatNumber } from "@/lib/utils";
@@ -79,7 +80,7 @@ export default function Endpoints() {
       const list = await api.listEndpoints();
       setEndpoints(list);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao carregar endpoints");
+      toast.error(errMessage(err, "Falha ao carregar endpoints"));
     } finally {
       setLoading(false);
     }
@@ -275,7 +276,7 @@ export default function Endpoints() {
                   setConfirmDelete(null);
                   void refresh();
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Falha ao desativar");
+                  toast.error(errMessage(err, "Falha ao desativar"));
                 }
               }}
             >
@@ -369,7 +370,7 @@ function EndpointFormDialog({
       }
       onSaved();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao salvar");
+      toast.error(errMessage(err, "Falha ao salvar"));
     } finally {
       setSubmitting(false);
     }
@@ -414,6 +415,7 @@ function EndpointFormDialog({
                 </a>
               </p>
             )}
+            <ProviderHelp kind={form.provider_kind} slug={form.slug} />
           </div>
 
           <div className="grid grid-cols-2 gap-4">

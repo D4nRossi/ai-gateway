@@ -59,6 +59,20 @@ export interface ProviderMeta {
     | "zinc";
   /** Default LBStrategy sugerida ao criar endpoint deste provider. */
   defaultStrategy?: LBStrategy;
+  /** URLs reais que servem de referência ("um endpoint Azure costuma ser
+   *  algo como esses"). Renderizado como uma lista no form. */
+  exampleURLs?: string[];
+  /** Snippet de request que o consumer deveria fazer DEPOIS de cadastrar.
+   *  Renderizado em <pre> abaixo do form. */
+  requestExample?: {
+    /** Caminho que o cliente chama via gateway: /v1/proxy/{slug}{path}. */
+    path: string;
+    method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+    /** JSON body de exemplo, indentado. */
+    body?: string;
+    /** Observações específicas do provider (versão da API, deployments, etc). */
+    notes?: string[];
+  };
 }
 
 export const PROVIDERS: Record<ProviderKind, ProviderMeta> = {
@@ -66,13 +80,36 @@ export const PROVIDERS: Record<ProviderKind, ProviderMeta> = {
     kind: "azure_openai",
     label: "Azure OpenAI",
     tagline: "OpenAI hospedado em Azure (chat completions, embeddings).",
-    baseURL: "https://{recurso}.cognitiveservices.azure.com",
+    baseURL: "https://{recurso}.openai.azure.com",
     authType: "api_key_header",
     authHeader: "api-key",
     authHint: "Use a chave do Azure (KeyVault → cognitive-services-key).",
     docs: "https://learn.microsoft.com/azure/ai-services/openai/reference",
     accent: "blue",
     defaultStrategy: "round_robin",
+    exampleURLs: [
+      "https://td-openai-tpcore-nespresso-sumarizacao-brsouth.openai.azure.com",
+      "https://td-openai-tpcore-ambev-sumarizacao-brsouth.openai.azure.com",
+      "https://td-openai-tpcore-metlife-sumarizacao-brsouth.openai.azure.com",
+      "https://td-openai-tpcore-sephora-sumarizacao-brsouth.openai.azure.com",
+    ],
+    requestExample: {
+      method: "POST",
+      path: "/openai/deployments/{deployment}/chat/completions?api-version=2024-08-01-preview",
+      body: `{
+  "messages": [
+    {"role":"system","content":"Você é um assistente útil."},
+    {"role":"user","content":"Resuma o relatório em 3 bullets."}
+  ],
+  "temperature": 0.3,
+  "max_tokens": 500
+}`,
+      notes: [
+        "Cada deploy Azure (Nespresso, Ambev, MetLife, Sephora…) é um endpoint diferente — cadastre um por cliente.",
+        "{deployment} no path é o nome do deployment configurado no portal Azure (não o modelo).",
+        "api-version varia conforme o release; consulte a documentação oficial para a mais recente.",
+      ],
+    },
   },
   openai: {
     kind: "openai",
@@ -84,6 +121,16 @@ export const PROVIDERS: Record<ProviderKind, ProviderMeta> = {
     docs: "https://platform.openai.com/docs/api-reference",
     accent: "emerald",
     defaultStrategy: "round_robin",
+    exampleURLs: ["https://api.openai.com/v1"],
+    requestExample: {
+      method: "POST",
+      path: "/chat/completions",
+      body: `{
+  "model": "gpt-4o-mini",
+  "messages": [{"role":"user","content":"Olá!"}]
+}`,
+      notes: ["Único endpoint global — não precisa cadastrar um por cliente."],
+    },
   },
   anthropic: {
     kind: "anthropic",
@@ -96,6 +143,20 @@ export const PROVIDERS: Record<ProviderKind, ProviderMeta> = {
     docs: "https://docs.anthropic.com/en/api/getting-started",
     accent: "amber",
     defaultStrategy: "round_robin",
+    exampleURLs: ["https://api.anthropic.com/v1"],
+    requestExample: {
+      method: "POST",
+      path: "/messages",
+      body: `{
+  "model": "claude-3-5-sonnet-latest",
+  "max_tokens": 500,
+  "messages": [{"role":"user","content":"Olá Claude!"}]
+}`,
+      notes: [
+        "Header obrigatório: anthropic-version: 2023-06-01 (envie no request do consumer).",
+        "Endpoint usa /messages (formato Anthropic), não /chat/completions.",
+      ],
+    },
   },
   gemini: {
     kind: "gemini",
@@ -109,6 +170,18 @@ export const PROVIDERS: Record<ProviderKind, ProviderMeta> = {
     docs: "https://ai.google.dev/api/rest",
     accent: "sky",
     defaultStrategy: "round_robin",
+    exampleURLs: ["https://generativelanguage.googleapis.com/v1beta"],
+    requestExample: {
+      method: "POST",
+      path: "/models/gemini-2.0-flash:generateContent",
+      body: `{
+  "contents": [{"parts":[{"text":"Olá Gemini!"}]}]
+}`,
+      notes: [
+        "Formato Gemini usa contents[]/parts[] em vez de messages[].",
+        "Modelo vai no path (não no body): models/{model}:generateContent.",
+      ],
+    },
   },
   mistral: {
     kind: "mistral",
@@ -165,6 +238,19 @@ export const PROVIDERS: Record<ProviderKind, ProviderMeta> = {
     docs: "https://github.com/ollama/ollama/blob/main/docs/api.md",
     accent: "violet",
     defaultStrategy: "least_connections",
+    exampleURLs: ["http://localhost:11434", "http://gpu-host:11434"],
+    requestExample: {
+      method: "POST",
+      path: "/api/chat",
+      body: `{
+  "model": "llama3.2",
+  "messages": [{"role":"user","content":"Olá!"}],
+  "stream": false
+}`,
+      notes: [
+        "Endpoint nativo Ollama: /api/chat. Existe também /v1/chat/completions (compatível OpenAI).",
+      ],
+    },
   },
   vllm: {
     kind: "vllm",

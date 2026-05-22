@@ -22,6 +22,7 @@ const ROOT_LABELS: Record<string, string> = {
   endpoints: "Endpoints",
   users: "Usuários",
   observability: "Observabilidade",
+  playground: "Playground",
 };
 
 export function Breadcrumbs() {

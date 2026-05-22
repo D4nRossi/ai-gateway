@@ -9,6 +9,7 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/domain/endpoint"
 )
 
+
 // applyProviderDefault returns ProviderCustom when input is empty so that older
 // clients (and the Phase-1 YAML-bootstrap path) still work seamlessly.
 func applyProviderDefault(pk string) endpoint.ProviderKind {
@@ -183,7 +184,10 @@ func CreateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 				writeAdminError(w, http.StatusBadRequest, "invalid_provider", "provider_kind inválido")
 				return
 			}
-			writeAdminError(w, http.StatusInternalServerError, "internal", "failed to create endpoint")
+			writeAdminErrorWithDetails(
+				w, http.StatusInternalServerError,
+				"internal", "falha ao criar endpoint", err.Error(),
+			)
 			return
 		}
 
@@ -249,7 +253,10 @@ func UpdateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 				writeAdminError(w, http.StatusBadRequest, "invalid_provider", "provider_kind inválido")
 				return
 			}
-			writeAdminError(w, http.StatusInternalServerError, "internal", "failed to update endpoint")
+			writeAdminErrorWithDetails(
+				w, http.StatusInternalServerError,
+				"internal", "falha ao atualizar endpoint", err.Error(),
+			)
 			return
 		}
 

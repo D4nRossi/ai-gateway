@@ -52,7 +52,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
 import { DataTableToolbar } from "@/components/DataTableToolbar";
-import { api, type Application, type Tier } from "@/lib/api";
+import { api, errMessage, type Application, type Tier } from "@/lib/api";
 import { filterByText } from "@/lib/filter";
 import { formatBRL, formatDateTime, formatNumber } from "@/lib/utils";
 
@@ -106,7 +106,7 @@ export default function Applications() {
     try {
       setApps(await api.listApplications());
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao carregar aplicações");
+      toast.error(errMessage(err, "Falha ao carregar aplicações"));
     } finally {
       setLoading(false);
     }
@@ -297,7 +297,7 @@ export default function Applications() {
                   setConfirmDelete(null);
                   void refresh();
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Falha ao desativar");
+                  toast.error(errMessage(err, "Falha ao desativar"));
                 }
               }}
             >
@@ -335,7 +335,7 @@ export default function Applications() {
                   setTokenReveal({ token: res.token, appName: confirmRotate.name });
                   setConfirmRotate(null);
                 } catch (err) {
-                  toast.error(err instanceof Error ? err.message : "Falha ao rotacionar");
+                  toast.error(errMessage(err, "Falha ao rotacionar"));
                 }
               }}
             >
@@ -404,7 +404,7 @@ function ApplicationFormDialog({
         onCreated(created, created.token);
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Falha ao salvar");
+      toast.error(errMessage(err, "Falha ao salvar"));
     } finally {
       setSubmitting(false);
     }

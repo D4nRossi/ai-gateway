@@ -16,7 +16,12 @@ import { api } from "@/lib/api";
 import { toast } from "@/components/ui/sonner";
 import { Breadcrumbs } from "./Breadcrumbs";
 
-export function Header() {
+interface HeaderProps {
+  /** Slot opcional renderizado à esquerda do breadcrumb (ex: botão de menu mobile). */
+  leftSlot?: React.ReactNode;
+}
+
+export function Header({ leftSlot }: HeaderProps) {
   const navigate = useNavigate();
   const session = useSession();
 
@@ -32,12 +37,20 @@ export function Header() {
   }
 
   return (
-    <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b border-border bg-background/60 px-8 backdrop-blur-md">
-      <Breadcrumbs />
+    <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b border-border bg-background/60 px-4 backdrop-blur-md sm:px-6 lg:px-8">
+      <div className="flex min-w-0 items-center gap-2">
+        {leftSlot}
+        <div className="min-w-0 truncate">
+          <Breadcrumbs />
+        </div>
+      </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-2 sm:gap-3">
         {session && (
-          <Badge variant={session.role === "admin" ? "default" : "outline"}>
+          <Badge
+            variant={session.role === "admin" ? "default" : "outline"}
+            className="hidden sm:inline-flex"
+          >
             <ShieldCheck className="mr-1 h-3 w-3" />
             {session.role}
           </Badge>
