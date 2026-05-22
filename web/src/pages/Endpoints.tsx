@@ -50,7 +50,9 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
 import { DataTableToolbar } from "@/components/DataTableToolbar";
-import { api, type LBStrategy, type ProxyEndpoint } from "@/lib/api";
+import { ProviderSelector, ProviderBadge } from "@/components/ProviderSelector";
+import { api, type LBStrategy, type ProviderKind, type ProxyEndpoint } from "@/lib/api";
+import { PROVIDERS } from "@/lib/providers";
 import { filterByText } from "@/lib/filter";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 
@@ -88,7 +90,14 @@ export default function Endpoints() {
   }, []);
 
   const filtered = useMemo(
-    () => filterByText(endpoints, search, (e) => [e.slug, e.name, e.lb_strategy]),
+    () =>
+      filterByText(endpoints, search, (e) => [
+        e.slug,
+        e.name,
+        e.lb_strategy,
+        e.provider_kind,
+        PROVIDERS[(e.provider_kind ?? "custom") as ProviderKind]?.label,
+      ]),
     [endpoints, search],
   );
 
@@ -134,6 +143,7 @@ export default function Endpoints() {
                 <TableRow>
                   <TableHead>Slug</TableHead>
                   <TableHead>Nome</TableHead>
+                  <TableHead>Provider</TableHead>
                   <TableHead>Estratégia</TableHead>
                   <TableHead>Max RPS</TableHead>
                   <TableHead>Status</TableHead>
@@ -144,7 +154,7 @@ export default function Endpoints() {
               <TableBody>
                 {filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={8} className="px-4 py-10 text-center text-sm text-muted-foreground">
                       Nenhum endpoint corresponde ao filtro.
                     </TableCell>
                   </TableRow>
@@ -157,6 +167,9 @@ export default function Endpoints() {
                       </Link>
                     </TableCell>
                     <TableCell className="font-medium">{ep.name}</TableCell>
+                    <TableCell>
+                      <ProviderBadge kind={ep.provider_kind ?? "custom"} />
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="font-mono text-[10px]">
                         {ep.lb_strategy}
@@ -278,6 +291,7 @@ export default function Endpoints() {
 interface EndpointForm {
   slug: string;
   name: string;
+  provider_kind: ProviderKind;
   lb_strategy: LBStrategy;
   max_rps: number;
   max_monthly_requests: number;
@@ -287,11 +301,30 @@ interface EndpointForm {
 const EMPTY_EP_FORM: EndpointForm = {
   slug: "",
   name: "",
+  provider_kind: "custom",
   lb_strategy: "round_robin",
   max_rps: 0,
   max_monthly_requests: 0,
   active: true,
 };
+
+/**
+ * Auto-preenche name + lb_strategy quando o operador escolhe um provider.
+ * Slug é deixado em branco (operador define o nome lógico que faz sentido
+ * para o domínio dele — "chat", "embeddings", "transcricao", etc.).
+ */
+function formForProvider(provider: ProviderKind, prev: EndpointForm): EndpointForm {
+  const meta = PROVIDERS[provider];
+  return {
+    ...prev,
+    provider_kind: provider,
+    // Mantém nome do usuário se já tiver digitado; senão usa label do provider.
+    name: prev.name || meta.label,
+    // Estratégia default sugerida pelo provider (e.g., least_connections para
+    // Ollama/vLLM locais que costumam ser single-instance).
+    lb_strategy: meta.defaultStrategy ?? prev.lb_strategy,
+  };
+}
 
 function EndpointFormDialog({
   open,
@@ -312,6 +345,7 @@ function EndpointFormDialog({
       setForm({
         slug: existing.slug,
         name: existing.name,
+        provider_kind: existing.provider_kind ?? "custom",
         lb_strategy: existing.lb_strategy,
         max_rps: existing.max_rps,
         max_monthly_requests: existing.max_monthly_requests,
@@ -348,40 +382,67 @@ function EndpointFormDialog({
         if (!o) onClose();
       }}
     >
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{existing ? "Editar endpoint" : "Novo endpoint"}</DialogTitle>
           <DialogDescription>
             Endpoints são acessíveis em <code className="font-mono">/v1/proxy/{"{slug}"}</code>.
+            Escolha um provider para que o gateway pré-preencha defaults; use{" "}
+            <strong>Personalizado</strong> para qualquer outra API HTTP.
           </DialogDescription>
         </DialogHeader>
 
-        <form className="grid grid-cols-2 gap-4" onSubmit={onSubmit}>
+        <form className="space-y-4" onSubmit={onSubmit}>
           <div className="space-y-2">
-            <Label htmlFor="slug">Slug</Label>
-            <Input
-              id="slug"
-              value={form.slug}
-              onChange={(e) => setForm({ ...form, slug: e.target.value })}
-              placeholder="speech-to-text"
-              disabled={!!existing || submitting}
-              required
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="name">Nome</Label>
-            <Input
-              id="name"
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="Azure Speech-to-Text"
+            <Label>Provider</Label>
+            <ProviderSelector
+              value={form.provider_kind}
+              onChange={(kind) => setForm(formForProvider(kind, form))}
               disabled={submitting}
-              required
             />
+            {form.provider_kind !== "custom" && PROVIDERS[form.provider_kind].docs && (
+              <p className="text-[11px] text-muted-foreground">
+                URL sugerida:{" "}
+                <code className="font-mono">{PROVIDERS[form.provider_kind].baseURL}</code> ·{" "}
+                <a
+                  href={PROVIDERS[form.provider_kind].docs}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline hover:text-foreground"
+                >
+                  Documentação
+                </a>
+              </p>
+            )}
           </div>
 
-          <div className="col-span-2 space-y-2">
-            <Label>Estratégia</Label>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="slug">Slug</Label>
+              <Input
+                id="slug"
+                value={form.slug}
+                onChange={(e) => setForm({ ...form, slug: e.target.value })}
+                placeholder="chat-default"
+                disabled={!!existing || submitting}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="name">Nome</Label>
+              <Input
+                id="name"
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="Provedor de chat principal"
+                disabled={submitting}
+                required
+              />
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label>Estratégia de balanceamento</Label>
             <Select
               value={form.lb_strategy}
               onValueChange={(v) => setForm({ ...form, lb_strategy: v as LBStrategy })}
@@ -400,33 +461,35 @@ function EndpointFormDialog({
             </Select>
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="rps">Max RPS (0 = ilimitado)</Label>
-            <Input
-              id="rps"
-              type="number"
-              min={0}
-              value={form.max_rps}
-              onChange={(e) => setForm({ ...form, max_rps: Number(e.target.value) })}
-              disabled={submitting}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="monthly">Limite mensal (0 = ilimitado)</Label>
-            <Input
-              id="monthly"
-              type="number"
-              min={0}
-              value={form.max_monthly_requests}
-              onChange={(e) => setForm({ ...form, max_monthly_requests: Number(e.target.value) })}
-              disabled={submitting}
-            />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="rps">Max RPS (0 = ilimitado)</Label>
+              <Input
+                id="rps"
+                type="number"
+                min={0}
+                value={form.max_rps}
+                onChange={(e) => setForm({ ...form, max_rps: Number(e.target.value) })}
+                disabled={submitting}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="monthly">Limite mensal (0 = ilimitado)</Label>
+              <Input
+                id="monthly"
+                type="number"
+                min={0}
+                value={form.max_monthly_requests}
+                onChange={(e) => setForm({ ...form, max_monthly_requests: Number(e.target.value) })}
+                disabled={submitting}
+              />
+            </div>
           </div>
 
           {existing && (
             <>
-              <Separator className="col-span-2" />
-              <div className="col-span-2 flex items-center justify-between rounded-md border border-input bg-background/40 px-3 py-2">
+              <Separator />
+              <div className="flex items-center justify-between rounded-md border border-input bg-background/40 px-3 py-2">
                 <div>
                   <p className="text-sm font-medium">Endpoint ativo</p>
                   <p className="text-xs text-muted-foreground">
@@ -442,7 +505,7 @@ function EndpointFormDialog({
             </>
           )}
 
-          <DialogFooter className="col-span-2 mt-2">
+          <DialogFooter className="mt-2">
             <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
               Cancelar
             </Button>

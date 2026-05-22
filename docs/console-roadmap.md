@@ -8,12 +8,56 @@ Lotes incrementais. Cada lote é fechado com commit + validação (`go build`,
 | Lote | Tema | Status | Entregue em |
 |---|---|---|---|
 | **A** | Quality of life (search, refresh, detail pages, breadcrumbs, Cmd+K) | ✅ | 2026-05-21 |
+| **A.6** | Provider Catalog (multi-provider, defaults inteligentes) | ✅ | 2026-05-22 |
 | B | Gestão de Models (CRUD + pricing) | ⏳ | — |
 | C | Dashboards visuais (gráficos timeseries) | ⏳ | — |
 | D | Segurança avançada (sessões, mudança de senha, 2FA opcional) | ⏳ | — |
 | E | Alertas & exports (thresholds, webhook, CSV) | ⏳ | — |
 | F | Operação avançada (drain mode, multi-key, IP allowlist) | ⏳ | — |
 | G | Provider management (multi-Azure, failover) | ⏳ | — |
+
+---
+
+## Lote A.6 — Provider Catalog (entregue 2026-05-22)
+
+Decisão registrada em [ADR-0016](adrs/0016-provider-catalog.md).
+
+### Backend
+- `domain/endpoint.ProviderKind` enum + 10 providers + `custom`
+- Migration `005_provider_kind`: `ALTER TABLE proxy_endpoints` adiciona coluna
+  com CHECK constraint, default `custom`, índice parcial
+- `adminservice.CreateEndpoint/UpdateEndpoint` validam o valor; `ErrInvalidProvider`
+- Repository CRUD inclui o campo nas queries e nos helpers de scan
+- Handler expõe `provider_kind` em request/response JSON; HTTP 400 em valor
+  inválido
+
+### Frontend
+- `web/src/lib/providers.ts` — catálogo completo (label, URL base, auth method,
+  hint, ícone, link de doc, cor de badge)
+- `ProviderSelector` — grid de cards selecionáveis (substitui dropdown seco)
+- `ProviderBadge` — versão compacta para listagem e detail header
+- Listagem ganha coluna **Provider** com badge colorido por accent
+- Detail page mostra badge + link "docs ↗" do provider
+- Form de endpoint: provider em destaque no topo; selecionar pré-preenche
+  nome e LB strategy
+- Form de target: ao adicionar target em endpoint não-custom, URL base e
+  tipo de auth vêm preenchidos com defaults do catálogo
+- Busca da listagem agora cobre `provider_kind` + label do provider
+
+### Limitações (metadata-only nesta fase)
+- O motor de proxy **continua passthrough total** — provider_kind é apenas
+  metadata. Não há tradução de payload (cliente fala a "língua" do provider
+  escolhido)
+- Catálogo cobre 10 providers comuns + custom; AWS Bedrock e Vertex AI ficam
+  para um Lote H futuro (precisam de auth complexa: Sig v4 / OAuth)
+
+### Validação
+```
+go vet ./...        → 0 issues
+go build ./...      → OK
+npm run build       → 428 KB JS (+ 8 KB do catálogo)
+npm audit           → 0 vulnerabilidades
+```
 
 ---
 

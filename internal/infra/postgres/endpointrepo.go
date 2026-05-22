@@ -32,12 +32,12 @@ func NewEndpointRepo(pool *pgxpool.Pool, enc crypto.Encrypter) *EndpointRepo {
 // Create inserts a new ProxyEndpoint (without targets) and returns it with ID set.
 func (r *EndpointRepo) Create(ctx context.Context, ep endpoint.ProxyEndpoint) (endpoint.ProxyEndpoint, error) {
 	const q = `
-		INSERT INTO proxy_endpoints (slug, name, lb_strategy, max_rps, max_monthly_requests, active)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO proxy_endpoints (slug, name, provider_kind, lb_strategy, max_rps, max_monthly_requests, active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		RETURNING id, created_at, updated_at`
 
 	row := r.pool.QueryRow(ctx, q,
-		ep.Slug, ep.Name, string(ep.LBStrategy),
+		ep.Slug, ep.Name, string(ep.ProviderKind), string(ep.LBStrategy),
 		ep.MaxRPS, ep.MaxMonthlyRequests, ep.Active,
 	)
 	if err := row.Scan(&ep.ID, &ep.CreatedAt, &ep.UpdatedAt); err != nil {
@@ -49,7 +49,7 @@ func (r *EndpointRepo) Create(ctx context.Context, ep endpoint.ProxyEndpoint) (e
 // Get retrieves a ProxyEndpoint by ID including its active targets.
 func (r *EndpointRepo) Get(ctx context.Context, id int64) (endpoint.ProxyEndpoint, error) {
 	const q = `
-		SELECT id, slug, name, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
+		SELECT id, slug, name, provider_kind, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
 		FROM proxy_endpoints WHERE id = $1`
 
 	row := r.pool.QueryRow(ctx, q, id)
@@ -71,7 +71,7 @@ func (r *EndpointRepo) Get(ctx context.Context, id int64) (endpoint.ProxyEndpoin
 // GetBySlug retrieves an active ProxyEndpoint by slug including its active targets.
 func (r *EndpointRepo) GetBySlug(ctx context.Context, slug string) (endpoint.ProxyEndpoint, error) {
 	const q = `
-		SELECT id, slug, name, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
+		SELECT id, slug, name, provider_kind, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
 		FROM proxy_endpoints WHERE slug = $1 AND active = true`
 
 	row := r.pool.QueryRow(ctx, q, slug)
@@ -93,7 +93,7 @@ func (r *EndpointRepo) GetBySlug(ctx context.Context, slug string) (endpoint.Pro
 // List returns all ProxyEndpoints without targets, ordered by slug.
 func (r *EndpointRepo) List(ctx context.Context) ([]endpoint.ProxyEndpoint, error) {
 	const q = `
-		SELECT id, slug, name, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
+		SELECT id, slug, name, provider_kind, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
 		FROM proxy_endpoints ORDER BY slug`
 
 	rows, err := r.pool.Query(ctx, q)
@@ -120,13 +120,13 @@ func (r *EndpointRepo) List(ctx context.Context) ([]endpoint.ProxyEndpoint, erro
 func (r *EndpointRepo) Update(ctx context.Context, ep endpoint.ProxyEndpoint) (endpoint.ProxyEndpoint, error) {
 	const q = `
 		UPDATE proxy_endpoints
-		SET slug = $1, name = $2, lb_strategy = $3, max_rps = $4,
-		    max_monthly_requests = $5, active = $6, updated_at = NOW()
-		WHERE id = $7
+		SET slug = $1, name = $2, provider_kind = $3, lb_strategy = $4, max_rps = $5,
+		    max_monthly_requests = $6, active = $7, updated_at = NOW()
+		WHERE id = $8
 		RETURNING updated_at`
 
 	row := r.pool.QueryRow(ctx, q,
-		ep.Slug, ep.Name, string(ep.LBStrategy),
+		ep.Slug, ep.Name, string(ep.ProviderKind), string(ep.LBStrategy),
 		ep.MaxRPS, ep.MaxMonthlyRequests, ep.Active, ep.ID,
 	)
 	if err := row.Scan(&ep.UpdatedAt); err != nil {
@@ -377,9 +377,9 @@ func (r *EndpointRepo) decryptAuth(authType endpoint.AuthType, authEnc []byte) (
 
 func scanEndpoint(row pgx.Row) (endpoint.ProxyEndpoint, error) {
 	var ep endpoint.ProxyEndpoint
-	var lbs string
+	var lbs, pk string
 	err := row.Scan(
-		&ep.ID, &ep.Slug, &ep.Name, &lbs,
+		&ep.ID, &ep.Slug, &ep.Name, &pk, &lbs,
 		&ep.MaxRPS, &ep.MaxMonthlyRequests, &ep.Active,
 		&ep.CreatedAt, &ep.UpdatedAt,
 	)
@@ -387,14 +387,15 @@ func scanEndpoint(row pgx.Row) (endpoint.ProxyEndpoint, error) {
 		return endpoint.ProxyEndpoint{}, err
 	}
 	ep.LBStrategy = endpoint.LBStrategy(lbs)
+	ep.ProviderKind = endpoint.ProviderKind(pk)
 	return ep, nil
 }
 
 func scanEndpointFromRows(rows pgx.Rows) (endpoint.ProxyEndpoint, error) {
 	var ep endpoint.ProxyEndpoint
-	var lbs string
+	var lbs, pk string
 	err := rows.Scan(
-		&ep.ID, &ep.Slug, &ep.Name, &lbs,
+		&ep.ID, &ep.Slug, &ep.Name, &pk, &lbs,
 		&ep.MaxRPS, &ep.MaxMonthlyRequests, &ep.Active,
 		&ep.CreatedAt, &ep.UpdatedAt,
 	)
@@ -402,5 +403,6 @@ func scanEndpointFromRows(rows pgx.Rows) (endpoint.ProxyEndpoint, error) {
 		return endpoint.ProxyEndpoint{}, err
 	}
 	ep.LBStrategy = endpoint.LBStrategy(lbs)
+	ep.ProviderKind = endpoint.ProviderKind(pk)
 	return ep, nil
 }

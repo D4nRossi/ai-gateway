@@ -9,6 +9,15 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/domain/endpoint"
 )
 
+// applyProviderDefault returns ProviderCustom when input is empty so that older
+// clients (and the Phase-1 YAML-bootstrap path) still work seamlessly.
+func applyProviderDefault(pk string) endpoint.ProviderKind {
+	if pk == "" {
+		return endpoint.ProviderCustom
+	}
+	return endpoint.ProviderKind(pk)
+}
+
 // targetAuthRequest is the JSON representation of target credentials in API requests.
 // Only fields relevant to the chosen type need to be provided.
 type targetAuthRequest struct {
@@ -38,6 +47,7 @@ type endpointResponse struct {
 	ID                 int64            `json:"id"`
 	Slug               string           `json:"slug"`
 	Name               string           `json:"name"`
+	ProviderKind       string           `json:"provider_kind"`
 	LBStrategy         string           `json:"lb_strategy"`
 	MaxRPS             int              `json:"max_rps"`
 	MaxMonthlyRequests int64            `json:"max_monthly_requests"`
@@ -68,6 +78,7 @@ func toEndpointResponse(ep endpoint.ProxyEndpoint) endpointResponse {
 		ID:                 ep.ID,
 		Slug:               ep.Slug,
 		Name:               ep.Name,
+		ProviderKind:       string(ep.ProviderKind),
 		LBStrategy:         string(ep.LBStrategy),
 		MaxRPS:             ep.MaxRPS,
 		MaxMonthlyRequests: ep.MaxMonthlyRequests,
@@ -93,6 +104,7 @@ func authFromRequest(a targetAuthRequest) endpoint.TargetAuth {
 type createEndpointRequest struct {
 	Slug               string `json:"slug"`
 	Name               string `json:"name"`
+	ProviderKind       string `json:"provider_kind"`
 	LBStrategy         string `json:"lb_strategy"`
 	MaxRPS             int    `json:"max_rps"`
 	MaxMonthlyRequests int64  `json:"max_monthly_requests"`
@@ -102,6 +114,7 @@ type createEndpointRequest struct {
 type updateEndpointRequest struct {
 	Slug               string `json:"slug"`
 	Name               string `json:"name"`
+	ProviderKind       string `json:"provider_kind"`
 	LBStrategy         string `json:"lb_strategy"`
 	MaxRPS             int    `json:"max_rps"`
 	MaxMonthlyRequests int64  `json:"max_monthly_requests"`
@@ -158,6 +171,7 @@ func CreateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 		ep := endpoint.ProxyEndpoint{
 			Slug:               req.Slug,
 			Name:               req.Name,
+			ProviderKind:       applyProviderDefault(req.ProviderKind),
 			LBStrategy:         endpoint.LBStrategy(req.LBStrategy),
 			MaxRPS:             req.MaxRPS,
 			MaxMonthlyRequests: req.MaxMonthlyRequests,
@@ -165,6 +179,10 @@ func CreateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 
 		created, err := svc.CreateEndpoint(r.Context(), ep)
 		if err != nil {
+			if errors.Is(err, adminservice.ErrInvalidProvider) {
+				writeAdminError(w, http.StatusBadRequest, "invalid_provider", "provider_kind inválido")
+				return
+			}
 			writeAdminError(w, http.StatusInternalServerError, "internal", "failed to create endpoint")
 			return
 		}
@@ -214,6 +232,7 @@ func UpdateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 			ID:                 id,
 			Slug:               req.Slug,
 			Name:               req.Name,
+			ProviderKind:       applyProviderDefault(req.ProviderKind),
 			LBStrategy:         endpoint.LBStrategy(req.LBStrategy),
 			MaxRPS:             req.MaxRPS,
 			MaxMonthlyRequests: req.MaxMonthlyRequests,
@@ -224,6 +243,10 @@ func UpdateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, endpoint.ErrNotFound) {
 				writeAdminError(w, http.StatusNotFound, "not_found", "endpoint not found")
+				return
+			}
+			if errors.Is(err, adminservice.ErrInvalidProvider) {
+				writeAdminError(w, http.StatusBadRequest, "invalid_provider", "provider_kind inválido")
 				return
 			}
 			writeAdminError(w, http.StatusInternalServerError, "internal", "failed to update endpoint")

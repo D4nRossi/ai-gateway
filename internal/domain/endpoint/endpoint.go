@@ -43,6 +43,52 @@ const (
 	LBIPHash LBStrategy = "ip_hash"
 )
 
+// ProviderKind classifies a ProxyEndpoint by the upstream service family it
+// proxies for. The value is metadata only — the proxy engine remains a pure
+// HTTP passthrough (ADR-0016). The frontend uses this tag to render provider
+// branding, pre-fill base URLs and auth methods, and surface analytics.
+//
+// `custom` is the catch-all for any HTTP API not in the curated catalog and
+// preserves the original passthrough behavior.
+type ProviderKind string
+
+const (
+	ProviderAzureOpenAI ProviderKind = "azure_openai"
+	ProviderOpenAI      ProviderKind = "openai"
+	ProviderAnthropic   ProviderKind = "anthropic"
+	ProviderGemini      ProviderKind = "gemini"
+	ProviderMistral     ProviderKind = "mistral"
+	ProviderCohere      ProviderKind = "cohere"
+	ProviderGroq        ProviderKind = "groq"
+	ProviderTogether    ProviderKind = "together"
+	ProviderOllama      ProviderKind = "ollama"
+	ProviderVLLM        ProviderKind = "vllm"
+	ProviderCustom      ProviderKind = "custom"
+)
+
+// validProviders mirrors the CHECK constraint on proxy_endpoints.provider_kind
+// (migration 005). Update both together when adding a provider.
+var validProviders = map[ProviderKind]struct{}{
+	ProviderAzureOpenAI: {},
+	ProviderOpenAI:      {},
+	ProviderAnthropic:   {},
+	ProviderGemini:      {},
+	ProviderMistral:     {},
+	ProviderCohere:      {},
+	ProviderGroq:        {},
+	ProviderTogether:    {},
+	ProviderOllama:      {},
+	ProviderVLLM:        {},
+	ProviderCustom:      {},
+}
+
+// Valid reports whether p is a known provider kind. Empty string is invalid;
+// callers should default to ProviderCustom when migrating older data.
+func (p ProviderKind) Valid() bool {
+	_, ok := validProviders[p]
+	return ok
+}
+
 // AuthType names the authentication method the proxy should apply when forwarding
 // a request to a Target.
 type AuthType string
@@ -121,6 +167,11 @@ type ProxyEndpoint struct {
 
 	// Name is the human-readable display name shown in the admin UI.
 	Name string
+
+	// ProviderKind tags this endpoint with the upstream service family
+	// (azure_openai, openai, anthropic, …). Metadata-only: drives UI rendering
+	// and analytics; does not change proxy behavior (ADR-0016).
+	ProviderKind ProviderKind
 
 	// LBStrategy controls how Targets are selected. Default: round_robin.
 	LBStrategy LBStrategy

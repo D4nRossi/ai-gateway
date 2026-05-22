@@ -55,6 +55,10 @@ const (
 // indistinguishable to prevent username enumeration (ADR-0011).
 var ErrInvalidCredentials = errors.New("invalid credentials")
 
+// ErrInvalidProvider is returned by Create/UpdateEndpoint when ProviderKind is
+// not in the supported enum (ADR-0016).
+var ErrInvalidProvider = errors.New("invalid provider kind")
+
 // Service is the admin application service. It is safe for concurrent use.
 type Service struct {
 	apps       application.Repository
@@ -322,10 +326,23 @@ func (s *Service) RotateAPIKey(ctx context.Context, applicationID int64) (string
 // ── Endpoint management ───────────────────────────────────────────────────────
 
 // CreateEndpoint creates a new proxy endpoint.
+//
+// Defaults applied here:
+//   - LBStrategy: round_robin
+//   - ProviderKind: custom (passthrough genérico) — ADR-0016
+//
+// Validation: ProviderKind must be a value enumerated in domain/endpoint.
+// Returns ErrInvalidProvider when unknown.
 func (s *Service) CreateEndpoint(ctx context.Context, ep endpoint.ProxyEndpoint) (endpoint.ProxyEndpoint, error) {
 	ep.Active = true
 	if ep.LBStrategy == "" {
 		ep.LBStrategy = endpoint.LBRoundRobin
+	}
+	if ep.ProviderKind == "" {
+		ep.ProviderKind = endpoint.ProviderCustom
+	}
+	if !ep.ProviderKind.Valid() {
+		return endpoint.ProxyEndpoint{}, fmt.Errorf("provider %q: %w", ep.ProviderKind, ErrInvalidProvider)
 	}
 
 	created, err := s.endpoints.Create(ctx, ep)
@@ -354,7 +371,15 @@ func (s *Service) ListEndpoints(ctx context.Context) ([]endpoint.ProxyEndpoint, 
 }
 
 // UpdateEndpoint persists changes to an existing endpoint.
+// Same provider_kind validation as CreateEndpoint (ADR-0016).
 func (s *Service) UpdateEndpoint(ctx context.Context, ep endpoint.ProxyEndpoint) (endpoint.ProxyEndpoint, error) {
+	if ep.ProviderKind == "" {
+		ep.ProviderKind = endpoint.ProviderCustom
+	}
+	if !ep.ProviderKind.Valid() {
+		return endpoint.ProxyEndpoint{}, fmt.Errorf("provider %q: %w", ep.ProviderKind, ErrInvalidProvider)
+	}
+
 	updated, err := s.endpoints.Update(ctx, ep)
 	if err != nil {
 		return endpoint.ProxyEndpoint{}, fmt.Errorf("updating endpoint id=%d: %w", ep.ID, err)

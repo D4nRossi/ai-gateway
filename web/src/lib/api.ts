@@ -152,10 +152,24 @@ export interface Target {
   created_at: string;
 }
 
+export type ProviderKind =
+  | "azure_openai"
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "mistral"
+  | "cohere"
+  | "groq"
+  | "together"
+  | "ollama"
+  | "vllm"
+  | "custom";
+
 export interface ProxyEndpoint {
   id: number;
   slug: string;
   name: string;
+  provider_kind: ProviderKind;
   lb_strategy: LBStrategy;
   max_rps: number;
   max_monthly_requests: number;
@@ -284,6 +298,7 @@ export const api = {
   createEndpoint(input: {
     slug: string;
     name: string;
+    provider_kind: ProviderKind;
     lb_strategy: LBStrategy;
     max_rps: number;
     max_monthly_requests: number;
@@ -298,6 +313,7 @@ export const api = {
     input: {
       slug: string;
       name: string;
+      provider_kind: ProviderKind;
       lb_strategy: LBStrategy;
       max_rps: number;
       max_monthly_requests: number;

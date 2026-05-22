@@ -48,6 +48,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
+import { ProviderBadge } from "@/components/ProviderSelector";
 import {
   api,
   ApiError,
@@ -57,6 +58,7 @@ import {
   type Target,
   type TargetAuthInput,
 } from "@/lib/api";
+import { providerMeta } from "@/lib/providers";
 import { formatDateTime, formatNumber } from "@/lib/utils";
 
 export default function EndpointDetail() {
@@ -121,6 +123,7 @@ export default function EndpointDetail() {
               <h2 className="text-2xl font-semibold tracking-tight">{ep?.name}</h2>
               {ep && (
                 <>
+                  <ProviderBadge kind={ep.provider_kind ?? "custom"} />
                   <Badge variant="outline" className="font-mono text-[10px]">
                     {ep.lb_strategy}
                   </Badge>
@@ -216,11 +219,30 @@ export default function EndpointDetail() {
 // ── Info tab ─────────────────────────────────────────────────────────────────
 
 function InfoCard({ ep }: { ep: ProxyEndpoint }) {
+  const meta = providerMeta(ep.provider_kind);
   return (
     <Card>
       <CardContent className="grid grid-cols-1 gap-x-6 gap-y-4 p-6 md:grid-cols-2">
         <Field label="ID" value={String(ep.id)} />
         <Field label="Slug" value={ep.slug} mono />
+        <div>
+          <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+            Provider
+          </Label>
+          <div className="mt-1 flex items-center gap-2">
+            <ProviderBadge kind={ep.provider_kind ?? "custom"} />
+            {meta.docs && (
+              <a
+                href={meta.docs}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                docs ↗
+              </a>
+            )}
+          </div>
+        </div>
         <Field label="Estratégia LB" value={ep.lb_strategy} mono />
         <Field
           label="Max RPS"
@@ -270,6 +292,24 @@ const EMPTY_TARGET: TargetForm = {
   active: true,
   auth: { type: "none" },
 };
+
+/**
+ * Pré-preenche o form de target com a URL base e o tipo de auth sugeridos pelo
+ * provider do endpoint. Reduz fricção: criar target Azure só pede a chave, não
+ * exige decorar URL pattern + header. Para `custom`, mantém os defaults vazios.
+ */
+function targetFormForProvider(endpointKind: string): TargetForm {
+  const meta = providerMeta(endpointKind);
+  return {
+    url: meta.baseURL,
+    weight: 1,
+    active: true,
+    auth: {
+      type: meta.authType,
+      header: meta.authHeader,
+    },
+  };
+}
 
 function TargetsPanel({
   ep,
@@ -362,6 +402,7 @@ function TargetsPanel({
       <TargetFormDialog
         open={adding || editing !== null}
         endpointId={ep.id}
+        endpointProvider={ep.provider_kind ?? "custom"}
         existing={editing}
         onClose={() => {
           setAdding(false);
@@ -418,12 +459,14 @@ function TargetsPanel({
 function TargetFormDialog({
   open,
   endpointId,
+  endpointProvider,
   existing,
   onClose,
   onSaved,
 }: {
   open: boolean;
   endpointId: number;
+  endpointProvider: string;
   existing: Target | null;
   onClose: () => void;
   onSaved: () => void;
@@ -440,9 +483,13 @@ function TargetFormDialog({
         auth: { type: existing.auth_type },
       });
     } else {
-      setForm(EMPTY_TARGET);
+      // Novo target → pré-preenche com base no provider do endpoint.
+      setForm(targetFormForProvider(endpointProvider));
     }
-  }, [existing, open]);
+  }, [existing, open, endpointProvider]);
+
+  // Hint visual mostrado abaixo do form, vindo do catálogo de providers.
+  const providerHint = providerMeta(endpointProvider).authHint;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -479,6 +526,12 @@ function TargetFormDialog({
           <DialogTitle>{existing ? "Editar target" : "Novo target"}</DialogTitle>
           <DialogDescription>
             Credenciais são cifradas em repouso com AES-256-GCM (ADR-0012).
+            {!existing && endpointProvider !== "custom" && (
+              <>
+                {" "}URL e tipo de auth foram pré-preenchidos a partir do provider{" "}
+                <strong>{providerMeta(endpointProvider).label}</strong>.
+              </>
+            )}
           </DialogDescription>
         </DialogHeader>
         <form className="space-y-4" onSubmit={onSubmit}>
@@ -491,6 +544,9 @@ function TargetFormDialog({
               required
               disabled={submitting}
             />
+            {!existing && providerHint && (
+              <p className="text-[11px] text-muted-foreground">{providerHint}</p>
+            )}
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
