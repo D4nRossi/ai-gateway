@@ -44,6 +44,17 @@ func Auth(apps application.Repository, logger *slog.Logger) func(http.Handler) h
 			}
 
 			prefix := auth.ExtractPrefix(tok)
+			if prefix == "" {
+				// auth.ExtractPrefix returns "" when the token contains any non-printable
+				// or non-ASCII byte. Reject before the DB lookup — the prefix column is
+				// UTF-8 text and Postgres rejects latin-1 bytes (SQLSTATE 22021), which
+				// would otherwise surface as a confusing 500 to the consumer.
+				logger.Warn("proxy auth: rejected token with non-ASCII bytes",
+					"remote_addr", r.RemoteAddr,
+				)
+				writeProxyError(w, http.StatusUnauthorized, "unauthorized", "malformed bearer token")
+				return
+			}
 
 			key, err := apps.GetAPIKeyByPrefix(r.Context(), prefix)
 			if err != nil {

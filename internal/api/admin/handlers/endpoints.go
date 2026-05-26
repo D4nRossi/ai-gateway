@@ -44,18 +44,26 @@ type targetResponse struct {
 }
 
 // endpointResponse is the JSON representation of a ProxyEndpoint.
+//
+// ProviderConfig is the per-kind config consumed by the path translator
+// (ADR-0017). For azure_openai, the UI expects:
+//
+//	{"api_version":"2025-01-01-preview","model_to_deployment":{"gpt-4.1":"gpt-4.1"}}
+//
+// For custom and other kinds without translation requirements, it's an empty object.
 type endpointResponse struct {
-	ID                 int64            `json:"id"`
-	Slug               string           `json:"slug"`
-	Name               string           `json:"name"`
-	ProviderKind       string           `json:"provider_kind"`
-	LBStrategy         string           `json:"lb_strategy"`
-	MaxRPS             int              `json:"max_rps"`
-	MaxMonthlyRequests int64            `json:"max_monthly_requests"`
-	Active             bool             `json:"active"`
-	Targets            []targetResponse `json:"targets"`
-	CreatedAt          string           `json:"created_at"`
-	UpdatedAt          string           `json:"updated_at"`
+	ID                 int64                  `json:"id"`
+	Slug               string                 `json:"slug"`
+	Name               string                 `json:"name"`
+	ProviderKind       string                 `json:"provider_kind"`
+	ProviderConfig     map[string]any         `json:"provider_config"`
+	LBStrategy         string                 `json:"lb_strategy"`
+	MaxRPS             int                    `json:"max_rps"`
+	MaxMonthlyRequests int64                  `json:"max_monthly_requests"`
+	Active             bool                   `json:"active"`
+	Targets            []targetResponse       `json:"targets"`
+	CreatedAt          string                 `json:"created_at"`
+	UpdatedAt          string                 `json:"updated_at"`
 }
 
 func toTargetResponse(t endpoint.Target) targetResponse {
@@ -75,11 +83,16 @@ func toEndpointResponse(ep endpoint.ProxyEndpoint) endpointResponse {
 	for i, t := range ep.Targets {
 		targets[i] = toTargetResponse(t)
 	}
+	pc := map[string]any(ep.ProviderConfig)
+	if pc == nil {
+		pc = map[string]any{} // never emit `null` for this field
+	}
 	return endpointResponse{
 		ID:                 ep.ID,
 		Slug:               ep.Slug,
 		Name:               ep.Name,
 		ProviderKind:       string(ep.ProviderKind),
+		ProviderConfig:     pc,
 		LBStrategy:         string(ep.LBStrategy),
 		MaxRPS:             ep.MaxRPS,
 		MaxMonthlyRequests: ep.MaxMonthlyRequests,
@@ -102,24 +115,30 @@ func authFromRequest(a targetAuthRequest) endpoint.TargetAuth {
 }
 
 // createEndpointRequest is the JSON body for POST /admin/v1/endpoints.
+//
+// ProviderConfig is required for kinds that need it (currently azure_openai).
+// Validation happens in adminservice; admin handler maps ErrInvalidProviderConfig
+// to HTTP 400 with the wrapped message so the UI can display it directly.
 type createEndpointRequest struct {
-	Slug               string `json:"slug"`
-	Name               string `json:"name"`
-	ProviderKind       string `json:"provider_kind"`
-	LBStrategy         string `json:"lb_strategy"`
-	MaxRPS             int    `json:"max_rps"`
-	MaxMonthlyRequests int64  `json:"max_monthly_requests"`
+	Slug               string         `json:"slug"`
+	Name               string         `json:"name"`
+	ProviderKind       string         `json:"provider_kind"`
+	ProviderConfig     map[string]any `json:"provider_config"`
+	LBStrategy         string         `json:"lb_strategy"`
+	MaxRPS             int            `json:"max_rps"`
+	MaxMonthlyRequests int64          `json:"max_monthly_requests"`
 }
 
 // updateEndpointRequest is the JSON body for PUT /admin/v1/endpoints/{id}.
 type updateEndpointRequest struct {
-	Slug               string `json:"slug"`
-	Name               string `json:"name"`
-	ProviderKind       string `json:"provider_kind"`
-	LBStrategy         string `json:"lb_strategy"`
-	MaxRPS             int    `json:"max_rps"`
-	MaxMonthlyRequests int64  `json:"max_monthly_requests"`
-	Active             bool   `json:"active"`
+	Slug               string         `json:"slug"`
+	Name               string         `json:"name"`
+	ProviderKind       string         `json:"provider_kind"`
+	ProviderConfig     map[string]any `json:"provider_config"`
+	LBStrategy         string         `json:"lb_strategy"`
+	MaxRPS             int            `json:"max_rps"`
+	MaxMonthlyRequests int64          `json:"max_monthly_requests"`
+	Active             bool           `json:"active"`
 }
 
 // addTargetRequest is the JSON body for POST /admin/v1/endpoints/{id}/targets.
@@ -173,6 +192,7 @@ func CreateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 			Slug:               req.Slug,
 			Name:               req.Name,
 			ProviderKind:       applyProviderDefault(req.ProviderKind),
+			ProviderConfig:     endpoint.ProviderConfig(req.ProviderConfig),
 			LBStrategy:         endpoint.LBStrategy(req.LBStrategy),
 			MaxRPS:             req.MaxRPS,
 			MaxMonthlyRequests: req.MaxMonthlyRequests,
@@ -182,6 +202,10 @@ func CreateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 		if err != nil {
 			if errors.Is(err, adminservice.ErrInvalidProvider) {
 				writeAdminError(w, http.StatusBadRequest, "invalid_provider", "provider_kind inválido")
+				return
+			}
+			if errors.Is(err, adminservice.ErrInvalidProviderConfig) {
+				writeAdminError(w, http.StatusBadRequest, "invalid_provider_config", err.Error())
 				return
 			}
 			if status, code, msg, details, ok := translatePgError(err); ok {
@@ -241,6 +265,7 @@ func UpdateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 			Slug:               req.Slug,
 			Name:               req.Name,
 			ProviderKind:       applyProviderDefault(req.ProviderKind),
+			ProviderConfig:     endpoint.ProviderConfig(req.ProviderConfig),
 			LBStrategy:         endpoint.LBStrategy(req.LBStrategy),
 			MaxRPS:             req.MaxRPS,
 			MaxMonthlyRequests: req.MaxMonthlyRequests,
@@ -255,6 +280,10 @@ func UpdateEndpoint(svc *adminservice.Service) http.HandlerFunc {
 			}
 			if errors.Is(err, adminservice.ErrInvalidProvider) {
 				writeAdminError(w, http.StatusBadRequest, "invalid_provider", "provider_kind inválido")
+				return
+			}
+			if errors.Is(err, adminservice.ErrInvalidProviderConfig) {
+				writeAdminError(w, http.StatusBadRequest, "invalid_provider_config", err.Error())
 				return
 			}
 			if status, code, msg, details, ok := translatePgError(err); ok {

@@ -45,6 +45,37 @@ func TestExtractPrefix(t *testing.T) {
 			token: "",
 			want:  "",
 		},
+		{
+			// UTF-8 multibyte (e.g. "ç" = 0xC3 0xA7) must be rejected — the prefix
+			// column is UTF-8 text but HTTP headers may transliterate to latin-1,
+			// triggering Postgres SQLSTATE 22021.
+			name:  "token with UTF-8 multibyte char — rejected",
+			token: "gwk_aplicação_secret",
+			want:  "",
+		},
+		{
+			// Latin-1 single-byte representation of "çã" — bytes 0xE7 0xE3.
+			// These appear in the wild when a client encodes the Authorization
+			// header with ISO-8859-1 instead of UTF-8 (RFC 7230 allows both).
+			name:  "token with raw latin-1 bytes — rejected",
+			token: "gwk_aplica\xe7\xe3_secret",
+			want:  "",
+		},
+		{
+			name:  "token with embedded space — rejected",
+			token: "gwk_app demo_secret",
+			want:  "",
+		},
+		{
+			name:  "token with tab — rejected",
+			token: "gwk_app\tdemo_secret",
+			want:  "",
+		},
+		{
+			name:  "token with high-bit byte 0x80 — rejected",
+			token: "gwk_a\x80b_secret",
+			want:  "",
+		},
 	}
 
 	for _, tc := range cases {

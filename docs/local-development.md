@@ -1,20 +1,33 @@
 # Desenvolvimento local
 
-Setup completo do ambiente de desenvolvimento, execução com mock e com Azure real, e testes manuais de cada endpoint e comportamento de política.
+Setup completo do ambiente de desenvolvimento em **Linux / macOS / WSL** e **Windows (PowerShell)**, execução com mock e com Azure real, fluxo dentro de **GoLand / WebStorm**, e testes manuais de cada endpoint.
+
+> Convenção deste documento: blocos `bash` são para Linux, macOS, WSL e Git Bash. Blocos `powershell` são para Windows PowerShell / PowerShell 7+. Quando o comando é idêntico nos dois mundos (ex.: `go`, `docker`, `npm`), não duplico.
 
 ---
 
 ## Pré-requisitos
 
-```bash
-go version           # >= 1.25
-docker --version     # >= 24
-docker compose version   # v2 (não o legado "docker-compose")
-```
+| Ferramenta | Versão mínima | Linux/macOS | Windows |
+|---|---|---|---|
+| Go | 1.25+ | `go version` | `go version` (instale via [go.dev/dl](https://go.dev/dl)) |
+| Docker + Compose v2 | 24+ | Docker Engine + plugin compose | Docker Desktop |
+| Node.js | 20+ | `node -v` | `node -v` (instale via [nodejs.org](https://nodejs.org)) |
+| Git | qualquer | nativo | Git for Windows (traz `bash`, `openssl`, `curl` reais) |
+
+IDEs recomendados (opcional):
+
+- **GoLand** para o backend Go
+- **WebStorm** para o frontend React/Vite (em `web/`)
+- Alternativa: VS Code com extensões Go + ESLint para ambos
+
+> **Windows: cuidado com o `curl` do PowerShell.** No PowerShell, `curl` é um alias para `Invoke-WebRequest`, com sintaxe **incompatível** com o curl Unix usado nos exemplos. Use sempre `curl.exe` explicitamente (Git for Windows e Windows 10+ já trazem). Ou troque pelo `Invoke-RestMethod` nativo se preferir.
 
 ---
 
 ## 1. Subir o banco
+
+Idêntico nos dois SOs:
 
 ```bash
 docker compose up -d postgres
@@ -30,33 +43,117 @@ O banco é criado automaticamente com usuário `gateway`, senha `gateway`, banco
 
 ## 2. Configurar variáveis de ambiente
 
+Copie o template:
+
 ```bash
 cp .env.example .env
 ```
 
-O `.env.example` já vem com as configurações de desenvolvimento preenchidas:
-
-```env
-AZURE_OPENAI_ENDPOINT=https://danie-mc4ryviy-westeurope.cognitiveservices.azure.com
-AZURE_OPENAI_API_KEY=your-azure-openai-api-key
-DATABASE_URL=postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable
+```powershell
+Copy-Item .env.example .env
 ```
 
-Edite `.env` e preencha `AZURE_OPENAI_API_KEY` se for usar Azure real. Para o modo mock, não precisa.
+O `.env.example` já vem com as configurações de desenvolvimento preenchidas. Edite `.env` e preencha `AZURE_OPENAI_API_KEY` se for usar Azure real. Para modo mock, não precisa.
 
-Carregue no shell:
+### Carregar no shell
+
+**Linux / macOS / WSL / Git Bash:**
 
 ```bash
 set -a && source .env && set +a
 ```
 
-> **Atenção:** nunca faça `export` direto de chaves no histórico do shell. Use `source .env` ou passe via Docker Compose.
+**Windows PowerShell:**
+
+```powershell
+Get-Content .env | ForEach-Object {
+  if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') {
+    [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+  }
+}
+```
+
+> **Observação Windows:** essas variáveis ficam só no processo PowerShell atual (`'Process'`). Ao fechar o terminal, somem. Pra persistir entre sessões troque por `'User'`, mas evite fazer isso com chaves Azure — segredo em variável de usuário do Windows fica no registro e é descoberto por qualquer processo seu.
+
+> **Atenção (ambos SOs):** nunca faça `export`/`Set-Item env:` direto de chaves no histórico do shell. Use sempre o `.env` ou as Run Configurations dos IDEs (próxima seção).
 
 ---
 
-## 3. Tokens de desenvolvimento
+## 3. Rodar via GoLand e WebStorm (recomendado)
 
-Três aplicações genéricas já estão configuradas em `configs/gateway.yaml`. Use diretamente:
+Se você está usando os IDEs JetBrains, esse é o caminho mais limpo: o `.env` é carregado automaticamente, o working directory já fica correto, e o stop/restart é botão.
+
+### 3.1 GoLand — gateway
+
+1. Abra a raiz do repo no GoLand.
+2. **Run** → **Edit Configurations…** → **+** → **Go Build**.
+3. Preencha:
+   - **Name**: `gateway`
+   - **Run kind**: `Package`
+   - **Package path**: `github.com/D4nRossi/ai-gateway/cmd/gateway`
+   - **Working directory**: raiz do projeto (deve já vir preenchido — confira que aponta pra pasta que contém `configs/` e `migrations/`, senão a app não acha o YAML nem as migrations)
+   - **Environment**: clique no ícone à direita. Versões recentes do GoLand têm o campo **"Paths to '.env' files (separated with semicolon)"** — aponte para o `.env` na raiz. Alternativas se essa opção não aparecer:
+     - Instalar o plugin **EnvFile** (Settings → Plugins → Marketplace) — adiciona uma aba "EnvFile" na Run Configuration onde você marca o `.env`.
+     - Ou colar as variáveis uma a uma no campo "Environment variables" (formato `KEY=VALUE;KEY2=VALUE2`).
+4. Para o modo mock, adicione `PROVIDER=mock` ao Environment.
+5. Salve e dê **Run**.
+
+### 3.2 GoLand — admin-create
+
+Mesma receita, mudando:
+
+- **Name**: `admin-create`
+- **Package path**: `github.com/D4nRossi/ai-gateway/cmd/admin-create`
+- **Program arguments**: `-username daniel -role admin`
+- **Environment**: mesmo `.env`
+
+> **Detalhe importante:** o terminal embarcado do GoLand nem sempre é detectado como TTY, e `term.ReadPassword` (usado pela CLI) recusa stdin não-interativo. Se aparecer `stdin is not a terminal — pass -stdin to read from a pipe`, marque **Emulate terminal in output console** na Run Configuration, ou rode no terminal externo, ou use o modo `-stdin` (veja seção 3.4).
+
+### 3.3 WebStorm — frontend
+
+Abra `web/` no WebStorm (pode ser uma janela separada, em paralelo com o GoLand). Os scripts npm já aparecem no painel **npm** lateral:
+
+| Script | O que faz |
+|---|---|
+| `npm install` | instala deps (rode uma vez) |
+| `npm run dev` | Vite em `http://localhost:5173` com hot reload e proxy de `/admin`, `/v1`, `/healthz`, `/readyz` para `localhost:8080` |
+| `npm run build` | gera `web/dist/` (entra no binário Go via `//go:embed`) |
+| `npm run typecheck` | só TS check, sem emitir |
+
+Para dev day-to-day: gateway rodando no GoLand (porta 8080) + `npm run dev` no WebStorm (porta 5173). Acesse `http://localhost:5173/ui` — todas as chamadas REST são proxyadas pro Go.
+
+Para validar o bundle embedado: `npm run build` no WebStorm, depois rebuild do Go no GoLand. Aí `http://localhost:8080/ui` serve o SPA direto do binário.
+
+### 3.4 Sem IDE — terminal direto
+
+**Linux / macOS / WSL:**
+
+```bash
+PROVIDER=mock go run ./cmd/gateway
+```
+
+**Windows PowerShell:**
+
+```powershell
+$env:PROVIDER = "mock"
+go run ./cmd/gateway
+```
+
+Para o `admin-create`, se o terminal não for TTY (CI, pipe), use `-stdin`:
+
+```bash
+echo "minhaSenhaSegura" | go run ./cmd/admin-create -username daniel -role admin -stdin
+```
+
+```powershell
+"minhaSenhaSegura" | go run ./cmd/admin-create -username daniel -role admin -stdin
+```
+
+---
+
+## 4. Tokens de desenvolvimento
+
+Três aplicações genéricas já estão configuradas em `configs/gateway.yaml`:
 
 | App | Token | Tier | Modelos permitidos |
 |---|---|---|---|
@@ -68,15 +165,9 @@ Para criar uma nova aplicação, veja o [guia de manutenção](maintenance.md#ad
 
 ---
 
-## 4. Rodar o gateway
+## 5. Saída esperada do gateway no boot
 
-### Modo mock (recomendado — não precisa de Azure)
-
-```bash
-PROVIDER=mock go run ./cmd/gateway
-```
-
-Saída esperada:
+Modo mock, log JSON:
 
 ```json
 {"time":"...","level":"INFO","msg":"ai gateway starting","config_path":"configs/gateway.yaml"}
@@ -86,15 +177,7 @@ Saída esperada:
 {"time":"...","level":"INFO","msg":"server listening","addr":":8080"}
 ```
 
-### Modo Azure (credenciais reais)
-
-```bash
-go run ./cmd/gateway
-# ou explicitamente:
-PROVIDER=azure go run ./cmd/gateway
-```
-
-### Com log em texto (mais legível no terminal)
+Para log em texto mais legível durante dev:
 
 ```yaml
 # configs/gateway.yaml
@@ -105,7 +188,9 @@ logging:
 
 ---
 
-## 5. Testes manuais dos endpoints
+## 6. Testes manuais dos endpoints
+
+> No Windows, troque `curl` por `curl.exe` em todos os exemplos abaixo. O `jq` é opcional — em PowerShell você pode pipar pra `ConvertFrom-Json | ConvertTo-Json -Depth 10` se preferir.
 
 ### Health / Readiness
 
@@ -149,9 +234,29 @@ curl -s http://localhost:8080/v1/chat/completions \
   }' | jq
 ```
 
+Equivalente PowerShell (com `Invoke-RestMethod`, sem precisar de `curl.exe`):
+
+```powershell
+$body = @{
+  model       = 'gpt-4.1-mini'
+  temperature = 0.2
+  max_tokens  = 200
+  messages    = @(
+    @{ role = 'system'; content = 'Você é um assistente útil.' }
+    @{ role = 'user';   content = 'O que é um AI Gateway?' }
+  )
+} | ConvertTo-Json -Depth 5
+
+Invoke-RestMethod -Method Post `
+  -Uri http://localhost:8080/v1/chat/completions `
+  -Headers @{ 'Authorization' = 'Bearer gwk_pro_n4vwlp8fy6hkjcqm' } `
+  -ContentType 'application/json' `
+  -Body $body
+```
+
 ### Chat completion (streaming SSE)
 
-AppPro tem `streaming_allowed: true` e pode usar stream:
+AppPro tem `streaming_allowed: true`:
 
 ```bash
 curl -s -N http://localhost:8080/v1/chat/completions \
@@ -165,11 +270,13 @@ curl -s -N http://localhost:8080/v1/chat/completions \
   }'
 ```
 
-Você verá linhas `data: {...}` chegando em tempo real, finalizando com `data: [DONE]`.
+Você verá linhas `data: {...}` chegando em tempo real, finalizando com `data: [DONE]`. No Windows use `curl.exe -N ...` (o `-N` desabilita o buffering, essencial pra streaming).
 
 ---
 
-## 6. Testar comportamentos de política
+## 7. Testar comportamentos de política
+
+Os exemplos abaixo estão em bash. Para PowerShell siga o padrão da seção 6 (`curl.exe` ou `Invoke-RestMethod`).
 
 ### Token inválido → 401
 
@@ -238,6 +345,8 @@ curl -s http://localhost:8080/v1/chat/completions \
 
 ### Payload grande → 413
 
+**Linux / macOS / WSL:**
+
 ```bash
 python3 -c "
 import json, sys
@@ -250,9 +359,30 @@ print(json.dumps(payload))
 # {"error":{"message":"payload_too_large"}}
 ```
 
+**Windows PowerShell:**
+
+```powershell
+$payload = @{
+  model    = 'gpt-4.1-nano'
+  messages = @(@{ role = 'user'; content = ('x' * 1100000) })
+} | ConvertTo-Json -Depth 5 -Compress
+
+try {
+  Invoke-RestMethod -Method Post `
+    -Uri http://localhost:8080/v1/chat/completions `
+    -Headers @{ 'Authorization' = 'Bearer gwk_basic_k9mxqr7tz2wn3vfp' } `
+    -ContentType 'application/json' `
+    -Body $payload
+} catch {
+  $_.Exception.Response.StatusCode   # PayloadTooLarge (413)
+}
+```
+
 ---
 
-## 7. Rodar os testes
+## 8. Rodar os testes
+
+Idêntico nos dois SOs:
 
 ```bash
 # Todos os testes (não precisa de banco)
@@ -271,15 +401,27 @@ go test -bench=. -benchmem -benchtime=2s ./internal/api/handlers/...
 go test -v -run 'TestChat_TierPipeline_Latency' ./internal/api/handlers/...
 ```
 
-Veja [docs/testing.md](testing.md) para a documentação completa da suite de testes.
+Veja [docs/testing.md](testing.md) para a documentação completa da suite.
 
 ---
 
-## 8. Verificar dados no banco
+## 9. Verificar dados no banco
+
+**Linux / macOS / WSL / Git Bash:**
 
 ```bash
 docker exec -it $(docker compose ps -q postgres) psql -U gateway -d gateway
 ```
+
+**Windows PowerShell:**
+
+```powershell
+docker exec -it (docker compose ps -q postgres) psql -U gateway -d gateway
+```
+
+> PowerShell trata `(comando)` como substituição de saída para argumentos de native commands, então a forma com parênteses funciona — diferente do bash que precisa de `$(...)`.
+
+Queries úteis (idênticas em qualquer cliente):
 
 ```sql
 -- Ver usage events recentes
@@ -307,15 +449,53 @@ ORDER BY created_at;
 
 ---
 
+## 10. Gerar um novo token + hash
+
+Para registrar uma nova aplicação no `gateway.yaml`, você precisa de um token aleatório e do hash SHA-256 dele.
+
+**Linux / macOS / WSL / Git Bash:**
+
+```bash
+TOKEN="gwk_novaapp_$(openssl rand -hex 24)"
+echo "Token (distribuir): $TOKEN"
+echo "Hash (gateway.yaml): $(echo -n "$TOKEN" | sha256sum | cut -d' ' -f1)"
+```
+
+**Windows PowerShell (puro, sem dependências externas):**
+
+```powershell
+$bytes = New-Object byte[] 24
+[Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
+$secret = -join ($bytes | ForEach-Object { '{0:x2}' -f $_ })
+$token  = "gwk_novaapp_$secret"
+
+$hashBytes = [Security.Cryptography.SHA256]::Create().ComputeHash(
+  [Text.Encoding]::UTF8.GetBytes($token)
+)
+$hash = -join ($hashBytes | ForEach-Object { '{0:x2}' -f $_ })
+
+"Token (distribuir): $token"
+"Hash (gateway.yaml): $hash"
+```
+
+> Não use `Get-Random` para gerar segredos — não é cripto-seguro. `RandomNumberGenerator.Fill` é.
+
+---
+
 ## Problemas comuns
 
 | Sintoma | Causa provável | Solução |
 |---|---|---|
 | `config validation failed: server.port` | YAML mal-formado | Verificar indentação do `gateway.yaml` |
 | `connecting to postgres: pinging postgres` | Banco não está rodando | `docker compose up -d postgres` |
-| `401 unauthorized` ao chamar endpoint | `key_hash` errado no YAML ou token errado | Regenerar: `echo -n "token" \| sha256sum` |
+| `401 unauthorized` ao chamar endpoint | `key_hash` errado no YAML ou token errado | Regenerar (seção 10) |
 | `403 model_not_allowed` | Modelo não está em `allowed_models` da app | Checar YAML da app |
 | `403 streaming_not_allowed` | App tem `streaming_allowed: false` | Usar AppPro ou habilitar no YAML |
 | Gateway sobe mas não persiste dados | Migrations não rodaram | Verificar log `"migrations applied"`; checar `DATABASE_URL` |
 | `/readyz` retorna 503 para Azure | Sem `AZURE_OPENAI_API_KEY` ou em modo mock | Use `PROVIDER=mock` ou configure a chave |
-| Build falha com `go: module requires Go 1.25` | Go desatualizado | `go install golang.org/dl/go1.25@latest && go1.25 download` |
+| Build falha com `go: module requires Go 1.25` | Go desatualizado | Atualizar via [go.dev/dl](https://go.dev/dl/) |
+| **(Windows)** `Invoke-WebRequest: Cannot bind parameter -H` | Usou `curl` em vez de `curl.exe` (alias do PowerShell) | Trocar para `curl.exe` ou usar `Invoke-RestMethod` |
+| **(Windows)** `term.ReadPassword: stdin is not a terminal` | Terminal embarcado do GoLand não é TTY | Marcar "Emulate terminal in output console" na Run Config, ou usar `-stdin` |
+| **(Windows)** `azure_openai.endpoint is required` mesmo com `.env` | `.env` foi setado em outro terminal e não persistiu | Recarregar o `.env` na sessão atual ou apontar pelo IDE (seção 3) |
+| **(Windows)** `migrate: no scheme` | Working directory errado (não é a raiz) | Em terminal: `cd` pra raiz. No GoLand: ajustar "Working directory" da Run Config |
+| **(Windows)** arquivos modificados aparecem com `^M` ou problemas de line ending | Git convertendo CRLF | `git config core.autocrlf false` neste repo |

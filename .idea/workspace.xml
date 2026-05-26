@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="ALL" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="">
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/local-development.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/local-development.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/app/adminservice/service.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/app/adminservice/service.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/auth/hash.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/auth/hash.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/auth/hash_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/auth/hash_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/proxy/auth.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/proxy/auth.go" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="GOROOT" url="file://C:/Program Files/Go" />
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="NextEditCompletionFeaturesState">
+    <decayedCancelled>
+      <entry key="MS100" value="1.7701448581936443" />
+      <entry key="MS500" value="2.603060768120317" />
+      <entry key="S2" value="2.889482577153235" />
+      <entry key="S5" value="2.9547967506137516" />
+      <entry key="S10" value="2.9772285638472535" />
+      <entry key="S30" value="2.9923714296175756" />
+      <entry key="S60" value="2.996180930934365" />
+      <entry key="M2" value="2.998089307868825" />
+      <entry key="M5" value="3.000334619756302" />
+      <entry key="M10" value="3.0327718513443505" />
+      <entry key="M15" value="3.1029480866459247" />
+      <entry key="M30" value="3.3211247641997694" />
+      <entry key="H1" value="3.566727431958812" />
+      <entry key="H2" value="3.7528234739483346" />
+      <entry key="H4" value="3.8676564358672474" />
+      <entry key="D1" value="3.976618125664985" />
+      <entry key="W1" value="3.9966257751094845" />
+    </decayedCancelled>
+    <decayedSelected>
+      <entry key="MS100" value="0.0" />
+      <entry key="MS500" value="0.0" />
+      <entry key="S2" value="0.0" />
+      <entry key="S5" value="0.0" />
+      <entry key="S10" value="0.0" />
+      <entry key="S30" value="0.0" />
+      <entry key="S60" value="0.0" />
+      <entry key="M2" value="0.0" />
+      <entry key="M5" value="0.0" />
+      <entry key="M10" value="0.0" />
+      <entry key="M15" value="0.0" />
+      <entry key="M30" value="0.0" />
+      <entry key="H1" value="0.0" />
+      <entry key="H2" value="0.0" />
+      <entry key="H4" value="0.0" />
+      <entry key="D1" value="0.0" />
+      <entry key="W1" value="0.0" />
+    </decayedSelected>
+    <decayedShown>
+      <entry key="MS100" value="1.6851915681165102" />
+      <entry key="MS500" value="2.5723168109955825" />
+      <entry key="S2" value="2.880591995234641" />
+      <entry key="S5" value="2.951130196472503" />
+      <entry key="S10" value="2.975376324629895" />
+      <entry key="S30" value="2.991749748021453" />
+      <entry key="S60" value="2.9958695531149004" />
+      <entry key="M2" value="2.9979334844174943" />
+      <entry key="M5" value="3.00027197619915" />
+      <entry key="M10" value="3.0327364139485757" />
+      <entry key="M15" value="3.1029184723705656" />
+      <entry key="M30" value="3.321100636255123" />
+      <entry key="H1" value="3.566710120151868" />
+      <entry key="H2" value="3.7528128297003462" />
+      <entry key="H4" value="3.8676505002563055" />
+      <entry key="D1" value="3.9766170393747835" />
+      <entry key="W1" value="3.996625617380117" />
+    </decayedShown>
+  </component>
+  <component name="ProjectColorInfo">{
+  &quot;associatedIndex&quot;: 0,
+  &quot;fromUser&quot;: false
+}</component>
+  <component name="ProjectId" id="3EGFSflLKSOfxwZ8hiSpDbPYqNq" />
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Go Build.admin-create.executor": "Run",
+    "Go Build.gateway.executor": "Run",
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.GoLinterPluginOnboardingV2": "true",
+    "RunOnceActivity.GoLinterPluginStorageMigration": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.go.analysis.ui.options.defaults": "true",
+    "RunOnceActivity.go.formatter.settings.were.checked": "true",
+    "RunOnceActivity.go.modules.go.list.on.any.changes.was.set": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "codeWithMe.voiceChat.enabledByDefault": "false",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "v2",
+    "go.sdk.automatically.set": "true",
+    "ignore.virus.scanning.warn.message": "true",
+    "junie.onboarding.icon.badge.shown": "true",
+    "last_opened_file_path": "E:/Teleperformance CRM SA/Arquitetura/Fontes/GoGateway/ai-gateway",
+    "node.js.detected.package.eslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "settings.editor.selected.configurable": "preferences.pluginManager",
+    "to.speed.mode.migration.done": "true"
+  }
+}]]></component>
+  <component name="RunManager" selected="Go Build.gateway">
+    <configuration name="admin-create" type="GoApplicationRunConfiguration" factoryName="Go Application">
+      <module name="ai-gateway" />
+      <working_directory value="$PROJECT_DIR$" />
+      <parameters value="-username daniel -role admin" />
+      <EXTENSION ID="net.ashald.envfile">
+        <option name="IS_ENABLED" value="true" />
+        <option name="IS_SUBST" value="true" />
+        <option name="IS_PATH_MACRO_SUPPORTED" value="false" />
+        <option name="IS_IGNORE_MISSING_FILES" value="false" />
+        <option name="IS_ENABLE_EXPERIMENTAL_INTEGRATIONS" value="false" />
+        <ENTRIES>
+          <ENTRY IS_ENABLED="true" PARSER="runconfig" IS_EXECUTABLE="false" />
+          <ENTRY IS_ENABLED="true" PARSER="env" IS_EXECUTABLE="false" PATH=".env" />
+        </ENTRIES>
+      </EXTENSION>
+      <kind value="PACKAGE" />
+      <package value="github.com/D4nRossi/ai-gateway/cmd/admin-create" />
+      <directory value="$PROJECT_DIR$" />
+      <pty_enabled value="true" />
+      <auto_managed_config_id value="$PROJECT_DIR$/cmd/admin-create" />
+      <method v="2" />
+    </configuration>
+    <configuration name="gateway" type="GoApplicationRunConfiguration" factoryName="Go Application">
+      <module name="ai-gateway" />
+      <working_directory value="$PROJECT_DIR$" />
+      <EXTENSION ID="net.ashald.envfile">
+        <option name="IS_ENABLED" value="true" />
+        <option name="IS_SUBST" value="true" />
+        <option name="IS_PATH_MACRO_SUPPORTED" value="false" />
+        <option name="IS_IGNORE_MISSING_FILES" value="false" />
+        <option name="IS_ENABLE_EXPERIMENTAL_INTEGRATIONS" value="false" />
+        <ENTRIES>
+          <ENTRY IS_ENABLED="true" PARSER="runconfig" IS_EXECUTABLE="false" />
+          <ENTRY IS_ENABLED="true" PARSER="env" IS_EXECUTABLE="false" PATH=".env" />
+        </ENTRIES>
+      </EXTENSION>
+      <kind value="PACKAGE" />
+      <package value="github.com/D4nRossi/ai-gateway/cmd/gateway" />
+      <directory value="$PROJECT_DIR$" />
+      <auto_managed_config_id value="$PROJECT_DIR$/cmd/gateway" />
+      <method v="2" />
+    </configuration>
+    <list>
+      <item itemvalue="Go Build.gateway" />
+      <item itemvalue="Go Build.admin-create" />
+    </list>
+  </component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-gosdk-72a9cf600ed8-3dd3895e5e08-org.jetbrains.plugins.go.sharedIndexes.bundled-GO-261.24374.154" />
+        <option value="bundled-js-predefined-d6986cc7102b-31caf2ab9e3c-JavaScript-GO-261.24374.154" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="Default task">
+      <changelist id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="" />
+      <created>1779797000396</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1779797000396</updated>
+    </task>
+    <servers />
+  </component>
+  <component name="TypeScriptGeneratedFilesManager">
+    <option name="version" value="3" />
+    <option name="exactExcludedFiles">
+      <list>
+        <option value="$PROJECT_DIR$/web/node_modules/tailwindcss/stubs/tailwind.config.cjs" />
+      </list>
+    </option>
+  </component>
+</project>

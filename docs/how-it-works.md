@@ -188,3 +188,90 @@ budget_counters ← uma linha por (app, YYYYMM); UPSERT acumulativo
 ```
 
 As migrations rodam automaticamente no boot (`db.RunMigrations`) e são idempotentes (golang-migrate rastreia versão aplicada).
+
+---
+
+## Como a aplicação cliente chama o gateway
+
+Existem dois planos paralelos, mantidos por compatibilidade:
+
+### Plano Phase 1 — `/v1/chat/completions` (Azure OpenAI hard-coded)
+
+Modelado em SPEC §6/§7. Para configs carregadas via YAML (`azure_openai` global).
+Cliente envia body OpenAI-style; gateway monta o path Azure usando
+`models[].deployment` do YAML.
+
+```
+POST /v1/chat/completions
+Authorization: Bearer gwk_appbasico_...
+Content-Type: application/json
+
+{"model":"gpt-4.1-nano","messages":[...]}
+```
+
+### Plano v2 — `/v1/proxy/{slug}/*` (proxy genérico + path translation)
+
+Modelado em ADR-0010 (motor genérico) + ADR-0016 (provider catalog) + ADR-0017
+(path translation). Para endpoints cadastrados no DB pela UI admin, podendo
+apontar para qualquer provider HTTP.
+
+**Endpoints `custom`**: passthrough total. O path enviado pelo cliente é
+encaminhado verbatim para o target.
+
+**Endpoints com `provider_kind` que tem translator** (hoje só `azure_openai`):
+o cliente fala OpenAI-style canônico (`/chat/completions`) e o gateway
+traduz para o path nativo do upstream.
+
+```
+POST /v1/proxy/azure-foundry/chat/completions
+Authorization: Bearer gwk_minhaapp_...
+Content-Type: application/json
+
+{"model":"gpt-4.1","messages":[...]}
+```
+
+Vira upstream:
+```
+POST https://danie-mc4ryviy-westeurope.cognitiveservices.azure.com/openai/deployments/gpt-4.1/chat/completions?api-version=2025-01-01-preview
+api-key: <decrypted target auth>
+```
+
+A tradução acontece em `internal/proxy/translator/`:
+
+1. `handler.go` lê o body se método tem body (POST/PUT/PATCH), capando em 1 MiB
+2. Restaura o body como `bytes.NewReader` no Request (para o ReverseProxy
+   poder re-streamar pro upstream)
+3. Invoca `translator.For(endpoint.ProviderKind)` — se houver translator,
+   chama `Translate(Input)` passando path, query, método, body e
+   `provider_config`
+4. `Output{Path, RawQuery}` é repassado para o `Rewrite` do ReverseProxy
+5. Sem translator (kind=custom ou outros não implementados): passthrough
+
+### Códigos de erro do translator
+
+| Sentinel | HTTP | Quando acontece |
+|---|---|---|
+| `ErrUnknownModel` | 400 `unknown_model` | Body tem `model` que não está em `model_to_deployment`. Mensagem lista os modelos disponíveis |
+| `ErrUnsupportedOperation` | 400 `bad_request` | Path canônico que o translator não conhece (ex.: `/embeddings` num translator que só faz chat) |
+| `ErrEndpointMisconfigured` | 500 `endpoint_misconfigured` | Endpoint salvo sem campos obrigatórios. Admin precisa editar |
+
+### Backward compatibility
+
+Clientes que enviavam o path Azure raw (`/openai/deployments/.../chat/completions`)
+continuam funcionando — o translator Azure detecta o prefixo `legacy` e faz
+passthrough. Quando todos migrarem pro path canônico, esse fallback pode
+ser removido em ADR futuro.
+
+### Adicionar um translator novo
+
+1. Implementar `translator.PathTranslator` no pacote (~30 LOC para qualquer
+   API OpenAI-compat: Groq, vLLM, Together, OpenAI nativo)
+2. Registrar no `translator.For` (1 case do switch)
+3. Documentar a forma esperada de `provider_config` no doc comment do struct
+4. Adicionar a validação em `adminservice.validateProviderConfig` se houver
+   campos obrigatórios
+5. Tests table-driven cobrindo: happy path, model ausente, mapping vazio,
+   path desconhecido, body sem model
+
+Detalhe completo do contrato + alternativas consideradas em
+[ADR-0017](adrs/0017-path-translation-proxy-plane.md).

@@ -31,13 +31,18 @@ func NewEndpointRepo(pool *pgxpool.Pool, enc crypto.Encrypter) *EndpointRepo {
 
 // Create inserts a new ProxyEndpoint (without targets) and returns it with ID set.
 func (r *EndpointRepo) Create(ctx context.Context, ep endpoint.ProxyEndpoint) (endpoint.ProxyEndpoint, error) {
+	pcJSON, err := marshalProviderConfig(ep.ProviderConfig)
+	if err != nil {
+		return endpoint.ProxyEndpoint{}, fmt.Errorf("marshalling provider_config for endpoint %q: %w", ep.Slug, err)
+	}
+
 	const q = `
-		INSERT INTO proxy_endpoints (slug, name, provider_kind, lb_strategy, max_rps, max_monthly_requests, active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		INSERT INTO proxy_endpoints (slug, name, provider_kind, provider_config, lb_strategy, max_rps, max_monthly_requests, active)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		RETURNING id, created_at, updated_at`
 
 	row := r.pool.QueryRow(ctx, q,
-		ep.Slug, ep.Name, string(ep.ProviderKind), string(ep.LBStrategy),
+		ep.Slug, ep.Name, string(ep.ProviderKind), pcJSON, string(ep.LBStrategy),
 		ep.MaxRPS, ep.MaxMonthlyRequests, ep.Active,
 	)
 	if err := row.Scan(&ep.ID, &ep.CreatedAt, &ep.UpdatedAt); err != nil {
@@ -49,7 +54,7 @@ func (r *EndpointRepo) Create(ctx context.Context, ep endpoint.ProxyEndpoint) (e
 // Get retrieves a ProxyEndpoint by ID including its active targets.
 func (r *EndpointRepo) Get(ctx context.Context, id int64) (endpoint.ProxyEndpoint, error) {
 	const q = `
-		SELECT id, slug, name, provider_kind, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
+		SELECT id, slug, name, provider_kind, provider_config, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
 		FROM proxy_endpoints WHERE id = $1`
 
 	row := r.pool.QueryRow(ctx, q, id)
@@ -71,7 +76,7 @@ func (r *EndpointRepo) Get(ctx context.Context, id int64) (endpoint.ProxyEndpoin
 // GetBySlug retrieves an active ProxyEndpoint by slug including its active targets.
 func (r *EndpointRepo) GetBySlug(ctx context.Context, slug string) (endpoint.ProxyEndpoint, error) {
 	const q = `
-		SELECT id, slug, name, provider_kind, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
+		SELECT id, slug, name, provider_kind, provider_config, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
 		FROM proxy_endpoints WHERE slug = $1 AND active = true`
 
 	row := r.pool.QueryRow(ctx, q, slug)
@@ -93,7 +98,7 @@ func (r *EndpointRepo) GetBySlug(ctx context.Context, slug string) (endpoint.Pro
 // List returns all ProxyEndpoints without targets, ordered by slug.
 func (r *EndpointRepo) List(ctx context.Context) ([]endpoint.ProxyEndpoint, error) {
 	const q = `
-		SELECT id, slug, name, provider_kind, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
+		SELECT id, slug, name, provider_kind, provider_config, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
 		FROM proxy_endpoints ORDER BY slug`
 
 	rows, err := r.pool.Query(ctx, q)
@@ -118,15 +123,20 @@ func (r *EndpointRepo) List(ctx context.Context) ([]endpoint.ProxyEndpoint, erro
 
 // Update persists changes to an existing ProxyEndpoint. ID must be set.
 func (r *EndpointRepo) Update(ctx context.Context, ep endpoint.ProxyEndpoint) (endpoint.ProxyEndpoint, error) {
+	pcJSON, err := marshalProviderConfig(ep.ProviderConfig)
+	if err != nil {
+		return endpoint.ProxyEndpoint{}, fmt.Errorf("marshalling provider_config for endpoint id=%d: %w", ep.ID, err)
+	}
+
 	const q = `
 		UPDATE proxy_endpoints
-		SET slug = $1, name = $2, provider_kind = $3, lb_strategy = $4, max_rps = $5,
-		    max_monthly_requests = $6, active = $7, updated_at = NOW()
-		WHERE id = $8
+		SET slug = $1, name = $2, provider_kind = $3, provider_config = $4, lb_strategy = $5, max_rps = $6,
+		    max_monthly_requests = $7, active = $8, updated_at = NOW()
+		WHERE id = $9
 		RETURNING updated_at`
 
 	row := r.pool.QueryRow(ctx, q,
-		ep.Slug, ep.Name, string(ep.ProviderKind), string(ep.LBStrategy),
+		ep.Slug, ep.Name, string(ep.ProviderKind), pcJSON, string(ep.LBStrategy),
 		ep.MaxRPS, ep.MaxMonthlyRequests, ep.Active, ep.ID,
 	)
 	if err := row.Scan(&ep.UpdatedAt); err != nil {
@@ -378,8 +388,9 @@ func (r *EndpointRepo) decryptAuth(authType endpoint.AuthType, authEnc []byte) (
 func scanEndpoint(row pgx.Row) (endpoint.ProxyEndpoint, error) {
 	var ep endpoint.ProxyEndpoint
 	var lbs, pk string
+	var pcRaw []byte
 	err := row.Scan(
-		&ep.ID, &ep.Slug, &ep.Name, &pk, &lbs,
+		&ep.ID, &ep.Slug, &ep.Name, &pk, &pcRaw, &lbs,
 		&ep.MaxRPS, &ep.MaxMonthlyRequests, &ep.Active,
 		&ep.CreatedAt, &ep.UpdatedAt,
 	)
@@ -388,14 +399,19 @@ func scanEndpoint(row pgx.Row) (endpoint.ProxyEndpoint, error) {
 	}
 	ep.LBStrategy = endpoint.LBStrategy(lbs)
 	ep.ProviderKind = endpoint.ProviderKind(pk)
+	ep.ProviderConfig, err = unmarshalProviderConfig(pcRaw)
+	if err != nil {
+		return endpoint.ProxyEndpoint{}, fmt.Errorf("unmarshalling provider_config: %w", err)
+	}
 	return ep, nil
 }
 
 func scanEndpointFromRows(rows pgx.Rows) (endpoint.ProxyEndpoint, error) {
 	var ep endpoint.ProxyEndpoint
 	var lbs, pk string
+	var pcRaw []byte
 	err := rows.Scan(
-		&ep.ID, &ep.Slug, &ep.Name, &pk, &lbs,
+		&ep.ID, &ep.Slug, &ep.Name, &pk, &pcRaw, &lbs,
 		&ep.MaxRPS, &ep.MaxMonthlyRequests, &ep.Active,
 		&ep.CreatedAt, &ep.UpdatedAt,
 	)
@@ -404,5 +420,36 @@ func scanEndpointFromRows(rows pgx.Rows) (endpoint.ProxyEndpoint, error) {
 	}
 	ep.LBStrategy = endpoint.LBStrategy(lbs)
 	ep.ProviderKind = endpoint.ProviderKind(pk)
+	ep.ProviderConfig, err = unmarshalProviderConfig(pcRaw)
+	if err != nil {
+		return endpoint.ProxyEndpoint{}, fmt.Errorf("unmarshalling provider_config: %w", err)
+	}
 	return ep, nil
+}
+
+// marshalProviderConfig serializes a ProviderConfig to the bytes pgx writes to a
+// JSONB column. A nil/empty map becomes `{}` so the DB never sees `null` for a
+// NOT NULL column.
+func marshalProviderConfig(pc endpoint.ProviderConfig) ([]byte, error) {
+	if len(pc) == 0 {
+		return []byte("{}"), nil
+	}
+	b, err := json.Marshal(pc)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+// unmarshalProviderConfig parses JSONB bytes into a ProviderConfig.
+// Empty input or "{}" yields a non-nil empty map (callers can read freely).
+func unmarshalProviderConfig(raw []byte) (endpoint.ProviderConfig, error) {
+	pc := endpoint.ProviderConfig{}
+	if len(raw) == 0 {
+		return pc, nil
+	}
+	if err := json.Unmarshal(raw, &pc); err != nil {
+		return nil, err
+	}
+	return pc, nil
 }

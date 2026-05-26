@@ -29,7 +29,11 @@ Aplicação interna
 | Docker Compose | v2 | Postgres local |
 | PostgreSQL | 17 (via Docker) | banco |
 | Node.js | 20+ | console web (`web/`) |
-| pnpm | 9+ (via `corepack enable pnpm`) | console web |
+| npm (ou pnpm 9+) | que vier com Node 20+ | console web |
+
+Funciona em **Linux, macOS, WSL2 e Windows nativo**. Para instruções específicas
+por SO (PowerShell, GoLand, WebStorm, gotchas do `curl` no Windows etc.), veja
+[`docs/local-development.md`](docs/local-development.md).
 
 ## Console web (admin UI)
 
@@ -37,26 +41,28 @@ O console React+Vite vive em `web/` e é embedado no binário Go via `//go:embed
 (ADR-0014). Para desenvolvedores backend, o fluxo é:
 
 ```bash
-# 1. Ativar pnpm (Node 20 já traz corepack)
-corepack enable pnpm
-
-# 2. Instalar dependências e gerar o bundle
+# 1. Instalar dependências e gerar o bundle
 cd web
-pnpm install
-pnpm build                       # gera web/dist/
+npm install
+npm run build                    # gera web/dist/
 
-# 3. Voltar para a raiz e (re)buildar o Go
+# 2. Voltar para a raiz e (re)buildar o Go
 cd ..
 go build ./cmd/gateway
 
-# 4. Subir o gateway — UI fica em http://localhost:8080/ui
-PROVIDER=mock ./gateway
+# 3. Subir o gateway — UI fica em http://localhost:8080/ui
+PROVIDER=mock ./gateway          # Linux/macOS/WSL
+# ── ou no Windows PowerShell ──
+# $env:PROVIDER="mock"; .\gateway.exe
 ```
+
+> Prefere `pnpm`? `corepack enable pnpm` e troque `npm` por `pnpm` nos
+> comandos acima — o `package.json` é compatível.
 
 Modo de desenvolvimento com hot reload (rode em terminal separado):
 
 ```bash
-cd web && pnpm dev               # Vite em http://localhost:5173
+cd web && npm run dev            # Vite em http://localhost:5173
                                  # proxia /admin e /v1 para o Go em :8080
 ```
 
@@ -64,6 +70,8 @@ cd web && pnpm dev               # Vite em http://localhost:5173
 
 O banco começa sem nenhum usuário admin — cada deploy define sua própria
 credencial inicial. Use a CLI dedicada:
+
+**Linux / macOS / WSL:**
 
 ```bash
 # carrega DATABASE_URL e demais vars
@@ -73,11 +81,30 @@ set -a && source .env && set +a
 go run ./cmd/admin-create -username daniel -role admin
 ```
 
+**Windows PowerShell:**
+
+```powershell
+# carrega .env no processo atual
+Get-Content .env | ForEach-Object {
+  if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') {
+    [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+  }
+}
+
+go run ./cmd/admin-create -username daniel -role admin
+```
+
 Depois disso, faça login em `http://localhost:8080/ui/login` e crie os demais
 usuários pela própria UI (papel `admin` pode gerenciar usuários, `operator`
 pode CRUD de aplicações/endpoints, `viewer` é só leitura).
 
+> No GoLand, prefira rodar pela Run Configuration — ela carrega o `.env`
+> automaticamente e evita o ritual acima. Detalhes em
+> [`docs/local-development.md` §3](docs/local-development.md#3-rodar-via-goland-e-webstorm-recomendado).
+
 ## Início rápido (modo mock — sem Azure)
+
+**Linux / macOS / WSL:**
 
 ```bash
 # 1. Subir o banco
@@ -85,12 +112,11 @@ docker compose up -d postgres
 
 # 2. Copiar e configurar variáveis
 cp .env.example .env
-# edite .env se necessário (DATABASE_URL já preenchida para dev local)
 
 # 3. Carregar variáveis no shell
 set -a && source .env && set +a
 
-# 4. Rodar com provider mock (sem precisar de credenciais Azure)
+# 4. Rodar com provider mock
 PROVIDER=mock go run ./cmd/gateway
 
 # 5. Testar (em outro terminal)
@@ -100,6 +126,35 @@ curl -s -X POST http://localhost:8080/v1/chat/completions \
   -H "Authorization: Bearer gwk_basic_k9mxqr7tz2wn3vfp" \
   -H "Content-Type: application/json" \
   -d '{"model":"gpt-4.1-nano","messages":[{"role":"user","content":"Olá!"}]}'
+```
+
+**Windows PowerShell:**
+
+```powershell
+# 1. Subir o banco
+docker compose up -d postgres
+
+# 2. Copiar e configurar variáveis
+Copy-Item .env.example .env
+
+# 3. Carregar variáveis no processo atual
+Get-Content .env | ForEach-Object {
+  if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$') {
+    [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process')
+  }
+}
+
+# 4. Rodar com provider mock
+$env:PROVIDER = "mock"
+go run ./cmd/gateway
+
+# 5. Testar (em outro terminal — `curl` puro do PowerShell NÃO funciona, use curl.exe)
+curl.exe http://localhost:8080/healthz
+
+curl.exe -X POST http://localhost:8080/v1/chat/completions `
+  -H "Authorization: Bearer gwk_basic_k9mxqr7tz2wn3vfp" `
+  -H "Content-Type: application/json" `
+  -d '{\"model\":\"gpt-4.1-nano\",\"messages\":[{\"role\":\"user\",\"content\":\"Olá!\"}]}'
 ```
 
 ## Aplicações de teste disponíveis
@@ -151,27 +206,50 @@ POST /v1/chat/completions      → chat (stream e non-stream, compatível OpenAI
 
 ## Comandos úteis
 
+Cross-platform (idênticos no Linux/macOS/Windows):
+
 ```bash
 # Infra
 docker compose up -d postgres       # sobe só o banco
 docker compose up                   # sobe banco + gateway em container
 
-# Desenvolvimento
-PROVIDER=mock go run ./cmd/gateway  # rodar sem Azure
+# Testes e build
 go test ./...                       # rodar toda a suite de testes
 go test -race ./...                 # rodar com detector de race conditions
 go test -bench=. -benchmem ./...    # rodar benchmarks com memória
-
-# Build
-CGO_ENABLED=0 GOOS=linux go build -o bin/ai-gateway ./cmd/gateway
+go build ./cmd/gateway              # binário local (gateway / gateway.exe)
 docker build -t ai-gateway:dev .
 
-# Gerar token + hash para nova aplicação
-TOKEN="gwk_novaapp_$(openssl rand -hex 24)"
-echo "Token (distribuir): $TOKEN"
-echo "Hash (gateway.yaml): $(echo -n "$TOKEN" | sha256sum | cut -d' ' -f1)"
-
-# Migration manual
+# Migration manual (precisa do migrate CLI: github.com/golang-migrate/migrate)
 migrate -database "$DATABASE_URL" -path migrations up
 migrate -database "$DATABASE_URL" -path migrations down 1
 ```
+
+Específicos por SO (rodar gateway sem Azure):
+
+```bash
+# Linux / macOS / WSL
+PROVIDER=mock go run ./cmd/gateway
+```
+
+```powershell
+# Windows PowerShell
+$env:PROVIDER = "mock"; go run ./cmd/gateway
+```
+
+Build de release Linux estático (para imagem Docker), funciona dos dois SOs:
+
+```bash
+# Linux / macOS
+CGO_ENABLED=0 GOOS=linux go build -o bin/ai-gateway ./cmd/gateway
+```
+
+```powershell
+# Windows PowerShell — cross-compilando para Linux
+$env:CGO_ENABLED = "0"; $env:GOOS = "linux"; go build -o bin/ai-gateway ./cmd/gateway
+Remove-Item Env:CGO_ENABLED, Env:GOOS   # limpa depois pra não vazar pras próximas builds
+```
+
+Gerar token + hash para nova aplicação: veja
+[`docs/local-development.md` §10](docs/local-development.md#10-gerar-um-novo-token--hash)
+(traz a receita pra bash *e* PowerShell puro, sem dependências externas).

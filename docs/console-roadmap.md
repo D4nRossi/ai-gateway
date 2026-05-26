@@ -5,16 +5,24 @@ Lotes incrementais. Cada lote é fechado com commit + validação (`go build`,
 
 ## Status
 
-| Lote | Tema | Status | Entregue em |
-|---|---|---|---|
-| **A** | Quality of life (search, refresh, detail pages, breadcrumbs, Cmd+K) | ✅ | 2026-05-21 |
-| **A.6** | Provider Catalog (multi-provider, defaults inteligentes) | ✅ | 2026-05-22 |
-| B | Gestão de Models (CRUD + pricing) | ⏳ | — |
-| C | Dashboards visuais (gráficos timeseries) | ⏳ | — |
-| D | Segurança avançada (sessões, mudança de senha, 2FA opcional) | ⏳ | — |
-| E | Alertas & exports (thresholds, webhook, CSV) | ⏳ | — |
-| F | Operação avançada (drain mode, multi-key, IP allowlist) | ⏳ | — |
-| G | Provider management (multi-Azure, failover) | ⏳ | — |
+| Lote | Tema | Status |
+|---|---|---|
+| **A** | Quality of life (search, refresh, detail pages, breadcrumbs, Cmd+K) | ✅ |
+| **A.6** | Provider Catalog (multi-provider, defaults inteligentes) | ✅ |
+| **Onda 2** | Path translation por `provider_kind` (UI: form de endpoint Azure + playground reformulado) | ⏳ próxima |
+| **Onda 5** | Modal dark mode + perf + playground OpenAI-style | ⏳ |
+| B | Gestão de Models (CRUD + pricing) | ⏳ |
+| C | Dashboards visuais (gráficos timeseries) | ⏳ |
+| D | Segurança avançada (sessões, mudança de senha, 2FA opcional) | ⏳ |
+| E | Alertas & exports (thresholds, webhook, CSV) | ⏳ |
+| F | Operação avançada (drain mode, multi-key, IP allowlist) | ⏳ |
+| G | Provider management (multi-Azure, failover) | ⏳ |
+
+> Lotes letrados são frentes próprias do console. **Ondas** são iniciativas
+> backend-first que tocam o console como consequência — alinhadas em
+> [`roadmap.md`](roadmap.md). A Onda 1 (hardening de tokens ASCII) já entrou em
+> produção; não tocou na UI, mas evita que tokens gerados de apps com nome
+> Unicode quebrem a autenticação no playground.
 
 ---
 

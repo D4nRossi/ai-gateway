@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -13,7 +15,13 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/app/proxyservice"
 	"github.com/D4nRossi/ai-gateway/internal/domain/endpoint"
 	"github.com/D4nRossi/ai-gateway/internal/proxy/loadbalancer"
+	"github.com/D4nRossi/ai-gateway/internal/proxy/translator"
 )
+
+// maxProxyBodyBytes caps the in-memory buffer used by the path translator to
+// inspect the request body (e.g. extract the "model" field for Azure OpenAI).
+// Matches the limit in internal/api/handlers/chat.go for consistency.
+const maxProxyBodyBytes = 1 << 20 // 1 MiB
 
 // Handler returns an http.Handler that serves /v1/proxy/{slug}/* requests.
 //
@@ -58,6 +66,16 @@ func Handler(svc *proxyservice.Service, transport http.RoundTripper, logger *slo
 			return
 		}
 
+		// Path translation per provider_kind (ADR-0017). The translator may
+		// inspect the body to choose the upstream path (Azure: extract `model`
+		// from the chat payload). When kind = custom or no translator exists,
+		// the request stays passthrough.
+		translation, err := applyTranslator(r, slug, res.Endpoint)
+		if err != nil {
+			handleTranslatorError(w, logger, slug, res.Endpoint.ID, err)
+			return
+		}
+
 		// Lifecycle: notify the balancer once before dispatching the upstream call.
 		// OnRequestEnd is registered to fire exactly once via ModifyResponse OR
 		// ErrorHandler (ReverseProxy guarantees these are mutually exclusive).
@@ -72,7 +90,7 @@ func Handler(svc *proxyservice.Service, transport http.RoundTripper, logger *slo
 
 		rp := &httputil.ReverseProxy{
 			Transport: transport,
-			Rewrite:   rewriteRequest(slug, res.Target),
+			Rewrite:   rewriteRequest(slug, res.Target, translation),
 			ModifyResponse: func(_ *http.Response) error {
 				fireEnd()
 				return nil
@@ -104,6 +122,79 @@ func Handler(svc *proxyservice.Service, transport http.RoundTripper, logger *slo
 
 		rp.ServeHTTP(w, r)
 	})
+}
+
+// applyTranslator runs the path translator for the endpoint's provider kind
+// when one is registered. Returns (nil, nil) when no translator applies — the
+// request stays passthrough (ADR-0017).
+//
+// When the translator needs to inspect the body, the body is read in full
+// (capped at maxProxyBodyBytes) and replaced on the request with a fresh
+// reader over the same bytes so the downstream ReverseProxy can re-read it.
+func applyTranslator(r *http.Request, slug string, ep endpoint.ProxyEndpoint) (*translator.Output, error) {
+	t, ok := translator.For(ep.ProviderKind)
+	if !ok {
+		return nil, nil
+	}
+
+	// Strip the "/v1/proxy/{slug}" prefix so the translator sees the canonical
+	// path the client intended (e.g. "/chat/completions").
+	prefix := "/v1/proxy/" + slug
+	canonical := strings.TrimPrefix(r.URL.Path, prefix)
+	if canonical == "" {
+		canonical = "/"
+	}
+
+	var body []byte
+	if r.Body != nil && r.ContentLength != 0 {
+		var err error
+		body, err = io.ReadAll(io.LimitReader(r.Body, maxProxyBodyBytes))
+		if err != nil {
+			return nil, err
+		}
+		// Restore body so ReverseProxy can stream it to upstream.
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		r.ContentLength = int64(len(body))
+	}
+
+	out, err := t.Translate(translator.Input{
+		CanonicalPath: canonical,
+		RawQuery:      r.URL.RawQuery,
+		Method:        r.Method,
+		Body:          body,
+		Config:        ep.ProviderConfig,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// handleTranslatorError maps translator sentinel errors to HTTP status codes.
+// ErrEndpointMisconfigured is a server-side condition (admin must fix the
+// endpoint), so it surfaces as 500 with a log entry. Other errors are client-
+// addressable (wrong path, wrong model) and map to 400.
+func handleTranslatorError(w http.ResponseWriter, logger *slog.Logger, slug string, endpointID int64, err error) {
+	switch {
+	case errors.Is(err, translator.ErrUnknownModel):
+		writeProxyError(w, http.StatusBadRequest, "unknown_model", err.Error())
+	case errors.Is(err, translator.ErrUnsupportedOperation):
+		writeProxyError(w, http.StatusBadRequest, "bad_request", err.Error())
+	case errors.Is(err, translator.ErrEndpointMisconfigured):
+		logger.Error("proxy translator: endpoint misconfigured",
+			"slug", slug,
+			"endpoint_id", endpointID,
+			"err", err,
+		)
+		writeProxyError(w, http.StatusInternalServerError, "endpoint_misconfigured", err.Error())
+	default:
+		logger.Error("proxy translator failed",
+			"slug", slug,
+			"endpoint_id", endpointID,
+			"err", err,
+		)
+		writeProxyError(w, http.StatusBadRequest, "bad_request", "request translation failed")
+	}
 }
 
 // handleResolveError maps proxyservice errors to HTTP status codes.

@@ -28,7 +28,6 @@ import (
 	"log/slog"
 	"strings"
 	"time"
-	"unicode"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -58,6 +57,12 @@ var ErrInvalidCredentials = errors.New("invalid credentials")
 // ErrInvalidProvider is returned by Create/UpdateEndpoint when ProviderKind is
 // not in the supported enum (ADR-0016).
 var ErrInvalidProvider = errors.New("invalid provider kind")
+
+// ErrInvalidProviderConfig is returned by Create/UpdateEndpoint when the
+// provider_config JSON does not satisfy the shape required by ProviderKind
+// (ADR-0017). The wrapped error message names the missing field so the UI can
+// surface it directly.
+var ErrInvalidProviderConfig = errors.New("invalid provider_config")
 
 // Service is the admin application service. It is safe for concurrent use.
 type Service struct {
@@ -330,9 +335,11 @@ func (s *Service) RotateAPIKey(ctx context.Context, applicationID int64) (string
 // Defaults applied here:
 //   - LBStrategy: round_robin
 //   - ProviderKind: custom (passthrough genérico) — ADR-0016
+//   - ProviderConfig: empty map when nil (kind-specific shape validated below)
 //
-// Validation: ProviderKind must be a value enumerated in domain/endpoint.
-// Returns ErrInvalidProvider when unknown.
+// Validation:
+//   - ProviderKind must be a value enumerated in domain/endpoint — ErrInvalidProvider
+//   - ProviderConfig must satisfy the per-kind shape — ErrInvalidProviderConfig (ADR-0017)
 func (s *Service) CreateEndpoint(ctx context.Context, ep endpoint.ProxyEndpoint) (endpoint.ProxyEndpoint, error) {
 	ep.Active = true
 	if ep.LBStrategy == "" {
@@ -343,6 +350,12 @@ func (s *Service) CreateEndpoint(ctx context.Context, ep endpoint.ProxyEndpoint)
 	}
 	if !ep.ProviderKind.Valid() {
 		return endpoint.ProxyEndpoint{}, fmt.Errorf("provider %q: %w", ep.ProviderKind, ErrInvalidProvider)
+	}
+	if ep.ProviderConfig == nil {
+		ep.ProviderConfig = endpoint.ProviderConfig{}
+	}
+	if err := validateProviderConfig(ep.ProviderKind, ep.ProviderConfig); err != nil {
+		return endpoint.ProxyEndpoint{}, err
 	}
 
 	created, err := s.endpoints.Create(ctx, ep)
@@ -371,7 +384,7 @@ func (s *Service) ListEndpoints(ctx context.Context) ([]endpoint.ProxyEndpoint, 
 }
 
 // UpdateEndpoint persists changes to an existing endpoint.
-// Same provider_kind validation as CreateEndpoint (ADR-0016).
+// Same validation rules as CreateEndpoint (ADR-0016, ADR-0017).
 func (s *Service) UpdateEndpoint(ctx context.Context, ep endpoint.ProxyEndpoint) (endpoint.ProxyEndpoint, error) {
 	if ep.ProviderKind == "" {
 		ep.ProviderKind = endpoint.ProviderCustom
@@ -379,12 +392,61 @@ func (s *Service) UpdateEndpoint(ctx context.Context, ep endpoint.ProxyEndpoint)
 	if !ep.ProviderKind.Valid() {
 		return endpoint.ProxyEndpoint{}, fmt.Errorf("provider %q: %w", ep.ProviderKind, ErrInvalidProvider)
 	}
+	if ep.ProviderConfig == nil {
+		ep.ProviderConfig = endpoint.ProviderConfig{}
+	}
+	if err := validateProviderConfig(ep.ProviderKind, ep.ProviderConfig); err != nil {
+		return endpoint.ProxyEndpoint{}, err
+	}
 
 	updated, err := s.endpoints.Update(ctx, ep)
 	if err != nil {
 		return endpoint.ProxyEndpoint{}, fmt.Errorf("updating endpoint id=%d: %w", ep.ID, err)
 	}
 	return updated, nil
+}
+
+// validateProviderConfig enforces the per-kind required shape of provider_config
+// at the admin layer, before persistence. Keeps invalid endpoints from being
+// saved so the proxy plane never encounters one at request time (ADR-0017).
+//
+// Reasoning: putting this validation here (and not in the domain or repo)
+// matches ADR-0015 — business rules live in the application layer; domain types
+// stay value-shaped, infra stays pure persistence.
+func validateProviderConfig(kind endpoint.ProviderKind, cfg endpoint.ProviderConfig) error {
+	switch kind {
+	case endpoint.ProviderAzureOpenAI:
+		apiVersion, _ := cfg["api_version"].(string)
+		if apiVersion == "" {
+			return fmt.Errorf("%w: azure_openai requires \"api_version\" (e.g. \"2025-01-01-preview\")",
+				ErrInvalidProviderConfig)
+		}
+		raw, ok := cfg["model_to_deployment"]
+		if !ok {
+			return fmt.Errorf("%w: azure_openai requires \"model_to_deployment\" mapping",
+				ErrInvalidProviderConfig)
+		}
+		m, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%w: \"model_to_deployment\" must be an object",
+				ErrInvalidProviderConfig)
+		}
+		if len(m) == 0 {
+			return fmt.Errorf("%w: \"model_to_deployment\" must list at least one model",
+				ErrInvalidProviderConfig)
+		}
+		for k, v := range m {
+			s, ok := v.(string)
+			if !ok || s == "" {
+				return fmt.Errorf("%w: model_to_deployment[%q] must be a non-empty string",
+					ErrInvalidProviderConfig, k)
+			}
+		}
+	default:
+		// Other kinds accept any (or no) provider_config for now. Add cases here
+		// as new translators introduce required fields.
+	}
+	return nil
 }
 
 // DeleteEndpoint soft-deletes a proxy endpoint.
@@ -498,16 +560,42 @@ func hashToken(raw string) string {
 }
 
 // deriveKeyPrefix builds the "gwk_{name}" prefix for an API key from an application name.
-// Takes up to keyPrefixMaxLen alphanumeric characters from the name (lowercased),
-// which is what the auth middleware stores and queries for O(1) candidate lookup.
+// Takes up to keyPrefixMaxLen ASCII [a-z0-9] characters from the name (lowercased);
+// any byte outside that range (including Unicode letters/digits, hyphens, spaces) is skipped.
 //
-// Examples: "AppDemo" → "gwk_appdemo", "My-Service-v2" → "gwk_myservicev"
+// Examples:
+//
+//	"AppDemo"        → "gwk_appdemo"
+//	"My-Service-v2"  → "gwk_myservicev"
+//	"Aplicação"      → "gwk_aplicao"      (ç/ã dropped — kept ASCII-only)
+//	"Aplicação Demo" → "gwk_aplicaodem"   (ç/ã/space dropped, truncated at 10)
+//
+// Reasoning: the prefix is transmitted inside the HTTP Authorization header on every
+// request and persisted in a UTF-8 text column. HTTP/1.1 (RFC 7230) defines header
+// field values as ISO-8859-1, which means clients may legitimately transliterate
+// UTF-8 multibyte characters to single-byte latin-1 representations. When that
+// happens, Postgres rejects the inbound parameter with SQLSTATE 22021 and the auth
+// path collapses to a generic 500 — even though the consumer presented the "correct"
+// token. Restricting the prefix to printable ASCII makes tokens portable across the
+// header-encoding ambiguity. The display name itself is unaffected and may stay
+// Unicode for the UI.
+//
+// References:
+//   - ADR-0009 — DB-backed admin plane (api_keys.key_prefix is the index)
+//   - RFC 7230 §3.2.4 — Field Value Components
+//   - SPEC.md §9.1 step 4b — prefix-based lookup contract
 func deriveKeyPrefix(name string) string {
 	var b strings.Builder
 	b.WriteString("gwk_")
-	for _, c := range strings.ToLower(name) {
-		if unicode.IsLetter(c) || unicode.IsDigit(c) {
-			b.WriteRune(c)
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		// ASCII lowercase fold for A–Z only — Unicode case folding is intentionally
+		// skipped because we already reject every non-ASCII rune below.
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteByte(c)
 			if b.Len() >= 4+keyPrefixMaxLen { // 4 = len("gwk_")
 				break
 			}

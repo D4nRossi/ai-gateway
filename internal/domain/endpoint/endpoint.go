@@ -169,9 +169,20 @@ type ProxyEndpoint struct {
 	Name string
 
 	// ProviderKind tags this endpoint with the upstream service family
-	// (azure_openai, openai, anthropic, …). Metadata-only: drives UI rendering
-	// and analytics; does not change proxy behavior (ADR-0016).
+	// (azure_openai, openai, anthropic, …). Metadata-only in ADR-0016; activated
+	// by ADR-0017 to drive path translation for non-custom kinds.
 	ProviderKind ProviderKind
+
+	// ProviderConfig holds the kind-specific configuration consumed by the path
+	// translator (ADR-0017). The shape is determined by ProviderKind:
+	//
+	//   azure_openai: {"api_version": "...", "model_to_deployment": {model: deployment}}
+	//   custom:       ignored — translator is no-op
+	//
+	// Persisted as JSONB. Validation per kind happens in internal/app/adminservice;
+	// the database accepts any valid JSON. Empty (`{}`) is the safe default for
+	// pre-translation rows and for kinds that don't need extra config.
+	ProviderConfig ProviderConfig
 
 	// LBStrategy controls how Targets are selected. Default: round_robin.
 	LBStrategy LBStrategy
@@ -192,6 +203,16 @@ type ProxyEndpoint struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 }
+
+// ProviderConfig is the in-memory representation of proxy_endpoints.provider_config
+// (JSONB). Stored as a map to keep the schema open per kind without a tagged
+// union; concrete typed accessors live in internal/proxy/translator.
+//
+// Reasoning: a Go interface with one struct per kind would be cleaner at use
+// site but forces the repository to know all kinds at compile time. A loose
+// map keeps the persistence layer pure persistence and lets the translator
+// layer own the schema decisions per kind.
+type ProviderConfig map[string]any
 
 // Repository defines the persistence contract for ProxyEndpoint, Target, and grant entities.
 // All methods accept a context.Context as first argument (CLAUDE.md §5.5).
