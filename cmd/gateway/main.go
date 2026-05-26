@@ -47,6 +47,7 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/config"
 	"github.com/D4nRossi/ai-gateway/internal/db"
 	"github.com/D4nRossi/ai-gateway/internal/infra/crypto"
+	"github.com/D4nRossi/ai-gateway/internal/infra/keyvault"
 	pginfra "github.com/D4nRossi/ai-gateway/internal/infra/postgres"
 	"github.com/D4nRossi/ai-gateway/internal/observability"
 	"github.com/D4nRossi/ai-gateway/internal/providers"
@@ -76,8 +77,24 @@ func run() error {
 		cfgPath = "configs/gateway.yaml"
 	}
 
+	// ── 1a. Key Vault client (optional) ───────────────────────────────────────
+	// When KEYVAULT_URI is set, the config loader can resolve ${kv:NAME}
+	// placeholders against Azure Key Vault. When unset, ${kv:NAME} markers in
+	// the YAML are a fatal config error (ADR-0018, fail-fast policy).
+	bootCtx, bootCancel := context.WithCancel(context.Background())
+	defer bootCancel()
+
+	var secretResolver config.SecretResolver
+	if vaultURL := os.Getenv("KEYVAULT_URI"); vaultURL != "" {
+		kvClient, err := keyvault.New(vaultURL)
+		if err != nil {
+			return fmt.Errorf("initializing Azure Key Vault client: %w", err)
+		}
+		secretResolver = kvClient
+	}
+
 	// ── 2. Load + validate config ─────────────────────────────────────────────
-	cfg, err := config.Load(cfgPath)
+	cfg, err := config.Load(bootCtx, cfgPath, secretResolver)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}

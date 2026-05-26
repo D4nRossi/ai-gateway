@@ -55,6 +55,11 @@ Copy-Item .env.example .env
 
 O `.env.example` já vem com as configurações de desenvolvimento preenchidas. Edite `.env` e preencha `AZURE_OPENAI_API_KEY` se for usar Azure real. Para modo mock, não precisa.
 
+> **Azure Key Vault (opcional)** — se preferir tirar os segredos do `.env` e
+> ler do KV em runtime, configure `KEYVAULT_URI` e troque cada `${VAR}` por
+> `${kv:NAME}` no `gateway.yaml`. Passo a passo em
+> [`docs/keyvault-setup.md`](keyvault-setup.md).
+
 ### Carregar no shell
 
 **Linux / macOS / WSL / Git Bash:**

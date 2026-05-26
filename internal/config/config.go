@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -8,6 +9,24 @@ import (
 
 	"gopkg.in/yaml.v3"
 )
+
+// SecretResolver fetches secrets by name. Implemented by
+// *internal/infra/keyvault.Client; declared as an interface here to keep
+// internal/config decoupled from the concrete Azure SDK (ADR-0018).
+//
+// When Load is called with a non-nil resolver, ${kv:NAME} references in the
+// YAML are replaced with the resolved value. When resolver is nil, any
+// ${kv:NAME} reference is a fatal config error.
+type SecretResolver interface {
+	Get(ctx context.Context, name string) (string, error)
+}
+
+// kvRefRe matches a ${kv:NAME} reference inside the raw YAML.
+// NAME is constrained to Key Vault's allowed character set: [a-zA-Z0-9-].
+//
+// References:
+//   - https://learn.microsoft.com/azure/key-vault/general/about-keys-secrets-certificates#vault-name-and-object-name
+var kvRefRe = regexp.MustCompile(`\$\{kv:([A-Za-z0-9\-]+)\}`)
 
 // Config is the top-level gateway configuration.
 type Config struct {
@@ -105,30 +124,106 @@ var hexSHA256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
 // The pattern is identical to hexSHA256Re; a separate variable makes intent explicit.
 var hexAES256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
-// Load reads the YAML file at path, expands ${VAR} environment placeholders,
-// unmarshals the result into Config, and calls Validate. Returns the validated
-// Config or an error that combines all validation failures.
+// Load reads the YAML file at path, resolves placeholders, unmarshals the
+// result into Config, and calls Validate. Returns the validated Config or an
+// error that combines all resolution and validation failures.
 //
-// Reasoning: env expansion happens before YAML parsing so secret placeholders
-// never appear in the struct; this isolates secret handling to the OS layer.
+// Placeholder resolution order:
+//  1. ${VAR} — expanded from process environment via os.ExpandEnv.
+//  2. ${kv:NAME} — fetched from `secrets` (typically backed by Azure Key
+//     Vault). All references are resolved before unmarshal; all errors are
+//     collected via errors.Join so the operator sees the full list at once.
+//
+// When secrets is nil, any ${kv:NAME} present in the YAML is treated as a
+// fatal config error (ADR-0018, fail-fast on missing KV).
+//
+// Reasoning: placeholder resolution happens before YAML parsing so secret
+// values never appear in the struct as ${...} markers and so the parser
+// sees a clean document. Env expansion runs first to allow patterns like
+// "${kv:${SECRET_NAME_VAR}}" if ever needed (currently no caller does it).
 //
 // References:
 //   - SPEC.md §4, §4.1
 //   - CLAUDE.md §10.1 — configuration loading policy
-func Load(path string) (*Config, error) {
+//   - ADR-0018 — Azure Key Vault como provider de segredos
+func Load(ctx context.Context, path string, secrets SecretResolver) (*Config, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading config file %s: %w", path, err)
 	}
+
 	expanded := os.ExpandEnv(string(raw))
+
+	resolved, err := resolveKVRefs(ctx, expanded, secrets)
+	if err != nil {
+		return nil, fmt.Errorf("resolving Key Vault references in %s: %w", path, err)
+	}
+
 	var cfg Config
-	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
+	if err := yaml.Unmarshal([]byte(resolved), &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config YAML %s: %w", path, err)
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// resolveKVRefs scans yaml for ${kv:NAME} markers and replaces each with the
+// value fetched from secrets. Unique names are fetched once even if referenced
+// multiple times. All resolution errors are collected and returned as a
+// single joined error so the operator gets the full picture in one shot
+// instead of fix-restart-fix-restart cycles.
+func resolveKVRefs(ctx context.Context, yaml string, secrets SecretResolver) (string, error) {
+	matches := kvRefRe.FindAllStringSubmatch(yaml, -1)
+	if len(matches) == 0 {
+		return yaml, nil
+	}
+
+	if secrets == nil {
+		// Build a unique, sorted list of names for a readable error message.
+		seen := map[string]struct{}{}
+		var names []string
+		for _, m := range matches {
+			if _, ok := seen[m[1]]; ok {
+				continue
+			}
+			seen[m[1]] = struct{}{}
+			names = append(names, m[1])
+		}
+		return "", fmt.Errorf(
+			"config references %d Key Vault secret(s) (%v) but KEYVAULT_URI is not configured",
+			len(names), names,
+		)
+	}
+
+	// Fetch unique names once; build a substitution table.
+	subs := make(map[string]string)
+	var fetchErrs []error
+	for _, m := range matches {
+		name := m[1]
+		if _, ok := subs[name]; ok {
+			continue
+		}
+		val, err := secrets.Get(ctx, name)
+		if err != nil {
+			fetchErrs = append(fetchErrs, err)
+			continue
+		}
+		subs[name] = val
+	}
+	if len(fetchErrs) > 0 {
+		return "", errors.Join(fetchErrs...)
+	}
+
+	// Replace in a single pass — ReplaceAllStringFunc reads the regex output,
+	// looks up the captured name in subs, and substitutes the value.
+	out := kvRefRe.ReplaceAllStringFunc(yaml, func(match string) string {
+		sub := kvRefRe.FindStringSubmatch(match)
+		// sub[0] is the full match, sub[1] is the capture group (NAME).
+		return subs[sub[1]]
+	})
+	return out, nil
 }
 
 // Validate checks all required fields and business invariants, collecting every

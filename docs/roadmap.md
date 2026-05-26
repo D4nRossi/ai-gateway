@@ -163,6 +163,22 @@ Hoje `usage_events.latency_ms` é só o total. Quando o user reclama de 2.6s, n�
 
 Apps cadastradas antes da Onda 1 com chars Unicode no prefix ficam órfãs. Hoje o cleanup é manual via `psql`. Considerar: comando CLI `cmd/admin-tools cleanup-nonascii-prefixes` que faz a query e pede confirmação. Baixa prioridade — provavelmente uma vez na vida.
 
+### Logs do slog assíncronos
+
+Hoje `audit_events`, `usage_events` e `budget_counters` são assíncronos via canal (ADR-0005). Mas o `slog.Logger` direto (start/end/error logs) é síncrono — cada `logger.Info(...)` faz write no stdout dentro da goroutine do handler. Em prod com stdout indo pra arquivo + fsync, vira gargalo acima de ~1k req/s. Solução: handler com buffer + flush em background, ou integração com Loki/Azure Monitor (que já fica na Phase 3, "Observabilidade externa"). Para a demo atual (≤100 req/s) é invisível.
+
+### Compression de payload
+
+- Outbound gateway → cliente: hoje não comprime. Response de chat com histórico pode chegar a 50-200KB; gzip cortaria pra ~10-30KB. Ganho real em conexão mobile/edge.
+- Outbound gateway → Azure: `DisableCompression: false` no transport, mas o Go por padrão só negocia gzip em GET; POST não envia `Accept-Encoding` automaticamente. Azure provavelmente sempre retorna identity.
+- Inbound cliente → gateway: chi não descompacta gzip request body. Se cliente comprimir, gateway quebra silenciosamente.
+
+Frente nova de 1-2h de trabalho. Não bloqueia nada urgente — entra na Phase 3.
+
+### Cache de policy/endpoint lookup
+
+Hoje cada request `/v1/proxy/*` faz `GetBySlug` + `HasGrant` no DB (~2-5ms). Cache LRU+TTL cortaria pra <0.1ms — micro-otimização. Vale quando aparecer pressão real. Phase 3.
+
 ---
 
 ## 4. Phase 3 — Escalabilidade e produção

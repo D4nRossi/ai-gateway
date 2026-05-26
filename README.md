@@ -178,8 +178,9 @@ Três aplicações genéricas pré-configuradas em `configs/gateway.yaml`:
 | [Suite de testes](docs/testing.md) | Como rodar testes, benchmarks, o que cada arquivo cobre |
 | [Deploy em produção](docs/production-deploy.md) | Docker, variáveis, segurança, checklist Azure |
 | [Manutenção](docs/maintenance.md) | Adicionar apps, rotacionar chaves, migrations, SQL de monitoramento |
-| [Roadmap](docs/roadmap.md) | O que está feito, o que vem na Phase 2 |
-| [ADRs](docs/adrs/) | Decisões arquiteturais registradas (ADR-0001 a ADR-0008) |
+| [Azure Key Vault](docs/keyvault-setup.md) | Setup do KV, permissionamento, sintaxe `${kv:NAME}` no YAML |
+| [Roadmap](docs/roadmap.md) | Estado atual, ondas em execução, frentes futuras |
+| [ADRs](docs/adrs/) | Decisões arquiteturais registradas (ADR-0001 a ADR-0018) |
 
 ## Endpoints
 

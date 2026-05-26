@@ -15,7 +15,10 @@ func baseValidConfig() Config {
 			APIKey:     "test-key",
 			APIVersion: "2024-10-21",
 		},
-		Database: DatabaseConfig{URL: "postgres://u:p@localhost/db"},
+		Database: DatabaseConfig{
+			URL:              "postgres://u:p@localhost/db",
+			EncryptionKeyHex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		},
 		Models: []ModelConfig{
 			{PublicName: "gpt-4.1-nano", Deployment: "nano-deploy", Provider: "azure"},
 		},

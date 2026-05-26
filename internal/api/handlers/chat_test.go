@@ -17,6 +17,7 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/observability"
 	"github.com/D4nRossi/ai-gateway/internal/providers"
 	"github.com/D4nRossi/ai-gateway/internal/providers/mock"
+	"github.com/D4nRossi/ai-gateway/internal/security/masking"
 	"github.com/D4nRossi/ai-gateway/internal/security/postvalidation"
 	"github.com/D4nRossi/ai-gateway/internal/usage"
 )
@@ -83,6 +84,11 @@ func testPolicy(tier string, allowedModels []string, streamOK bool) auth.AppPoli
 }
 
 // chatHandler builds a Chat http.HandlerFunc with the given budget and provider.
+//
+// Maskers must be populated for all tiers the test fixtures use — the chat
+// handler dereferences deps.Maskers[policy.Tier] unconditionally for tiers
+// whose pipeline has RunLocalMasking=true (currently tier_1 and tier_2). A
+// missing entry results in a nil-pointer panic at request time.
 func chatHandler(budgetCheck budget.PreChecker, prov providers.Provider) http.HandlerFunc {
 	logger, _ := observability.New("error", "text")
 	return Chat(ChatDeps{
@@ -94,6 +100,11 @@ func chatHandler(budgetCheck budget.PreChecker, prov providers.Provider) http.Ha
 		BudgetCount: noopRecorder{},
 		Validator:   postvalidation.New(),
 		Logger:      logger,
+		Maskers: map[string]*masking.Masker{
+			"tier_1": masking.NewMasker("tier_1"),
+			"tier_2": masking.NewMasker("tier_2"),
+			"tier_3": masking.NewMasker("tier_3"),
+		},
 	})
 }
 
