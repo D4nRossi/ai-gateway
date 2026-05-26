@@ -8,7 +8,7 @@ server:
 
 azure_openai:
   endpoint: ${AZURE_OPENAI_ENDPOINT}
-  api_key: ${AZURE_OPENAI_API_KEY}
+  api_key: ${kv:AZURE-OPENAI-API-KEY}
   api_version: "2025-01-01-preview"
   request_timeout_seconds: 60
 
@@ -20,13 +20,13 @@ azure_openai:
 #   content_safety_timeout_ms: 1500
 
 database:
-  url: ${DATABASE_URL}
+  url: ${kv:DATABASE-URL}
   max_conns: 20
   min_conns: 2
   # 64-char lowercase hex string (32 bytes) for AES-256-GCM encryption of proxy
   # target credentials. Generate with: openssl rand -hex 32
   # Never commit the real value; use the environment variable reference.
-  encryption_key_hex: ${DB_ENCRYPTION_KEY}
+  encryption_key_hex: ${kv:DB-ENCRYPTION-KEY}
 
 logging:
   level: info                       # debug | info | warn | error

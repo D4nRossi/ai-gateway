@@ -135,6 +135,34 @@ func TestResolveKVRefs_AcceptsAllowedCharSet(t *testing.T) {
 	}
 }
 
+// TestExpandEnvPreservingKV_LeavesKVMarkersAlone is the regression test for
+// the silent-empty-substitution bug introduced when Load called os.ExpandEnv
+// before resolveKVRefs. os.ExpandEnv would see ${kv:NAME} and call
+// os.Getenv("kv:NAME"), getting "" — destroying the marker before the KV
+// resolver could substitute it. Subsequent Validate() then complained that
+// required fields were missing, even though the KV had the values.
+func TestExpandEnvPreservingKV_LeavesKVMarkersAlone(t *testing.T) {
+	t.Parallel()
+
+	in := "a: ${kv:AZURE-OPENAI-API-KEY}\nb: ${kv:DATABASE-URL}\n"
+	out := expandEnvPreservingKV(in)
+	if out != in {
+		t.Errorf("expected kv markers preserved verbatim; got %q", out)
+	}
+}
+
+// TestExpandEnvPreservingKV_StillExpandsRegularEnv confirms the regression
+// fix did not break normal ${VAR} expansion.
+func TestExpandEnvPreservingKV_StillExpandsRegularEnv(t *testing.T) {
+	t.Setenv("MY_TEST_VAR", "hello")
+	in := "value: ${MY_TEST_VAR}\nkv: ${kv:FOO}\n"
+	out := expandEnvPreservingKV(in)
+	want := "value: hello\nkv: ${kv:FOO}\n"
+	if out != want {
+		t.Errorf("got %q; want %q", out, want)
+	}
+}
+
 func TestResolveKVRefs_RejectsInvalidCharsAsLiteral(t *testing.T) {
 	t.Parallel()
 

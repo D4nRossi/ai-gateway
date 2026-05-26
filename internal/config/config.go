@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -152,7 +153,7 @@ func Load(ctx context.Context, path string, secrets SecretResolver) (*Config, er
 		return nil, fmt.Errorf("reading config file %s: %w", path, err)
 	}
 
-	expanded := os.ExpandEnv(string(raw))
+	expanded := expandEnvPreservingKV(string(raw))
 
 	resolved, err := resolveKVRefs(ctx, expanded, secrets)
 	if err != nil {
@@ -167,6 +168,24 @@ func Load(ctx context.Context, path string, secrets SecretResolver) (*Config, er
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// expandEnvPreservingKV is os.ExpandEnv with one difference: ${kv:NAME}
+// markers are passed through verbatim instead of being looked up in the
+// process environment (which would always miss and substitute empty string,
+// silently destroying the placeholder before resolveKVRefs sees it).
+//
+// Implementation note: os.Expand calls the callback for every ${...} or $word
+// match. Returning "${name}" for a kv: prefix preserves the marker so the
+// downstream KV resolver can do its job. Everything else delegates to
+// os.Getenv exactly as os.ExpandEnv would.
+func expandEnvPreservingKV(s string) string {
+	return os.Expand(s, func(name string) string {
+		if strings.HasPrefix(name, "kv:") {
+			return "${" + name + "}"
+		}
+		return os.Getenv(name)
+	})
 }
 
 // resolveKVRefs scans yaml for ${kv:NAME} markers and replaces each with the

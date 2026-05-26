@@ -5,17 +5,10 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cmd/gateway/main.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/gateway/main.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/local-development.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/local-development.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/roadmap.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/roadmap.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/go.mod" beforeDir="false" afterPath="$PROJECT_DIR$/go.mod" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/go.sum" beforeDir="false" afterPath="$PROJECT_DIR$/go.sum" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/api/handlers/chat_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/api/handlers/chat_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/configs/gateway.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/configs/gateway.yaml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/internal/config/config.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/config/config.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/config/config_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/config/config_test.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/config/resolver_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/config/resolver_test.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -28,23 +21,23 @@
   </component>
   <component name="NextEditCompletionFeaturesState">
     <decayedCancelled>
-      <entry key="MS100" value="1.7701448581936443" />
-      <entry key="MS500" value="2.603060768120317" />
-      <entry key="S2" value="2.889482577153235" />
-      <entry key="S5" value="2.9547967506137516" />
-      <entry key="S10" value="2.9772285638472535" />
-      <entry key="S30" value="2.9923714296175756" />
-      <entry key="S60" value="2.996180930934365" />
-      <entry key="M2" value="2.998089307868825" />
-      <entry key="M5" value="3.000334619756302" />
-      <entry key="M10" value="3.0327718513443505" />
-      <entry key="M15" value="3.1029480866459247" />
-      <entry key="M30" value="3.3211247641997694" />
-      <entry key="H1" value="3.566727431958812" />
-      <entry key="H2" value="3.7528234739483346" />
-      <entry key="H4" value="3.8676564358672474" />
-      <entry key="D1" value="3.976618125664985" />
-      <entry key="W1" value="3.9966257751094845" />
+      <entry key="MS100" value="1.0268301698886797" />
+      <entry key="MS500" value="1.4849809551708675" />
+      <entry key="S2" value="1.834509281155409" />
+      <entry key="S5" value="1.930191718039942" />
+      <entry key="S10" value="1.9644644721501887" />
+      <entry key="S30" value="1.9880116785180375" />
+      <entry key="S60" value="1.9939877657788538" />
+      <entry key="M2" value="1.9969893508853813" />
+      <entry key="M5" value="1.9987946515254356" />
+      <entry key="M10" value="1.9994401078667914" />
+      <entry key="M15" value="2.0014147642235214" />
+      <entry key="M30" value="2.08015913082757" />
+      <entry key="H1" value="2.5547137699711095" />
+      <entry key="H2" value="3.480069953616284" />
+      <entry key="H4" value="4.428917822398064" />
+      <entry key="D1" value="5.679947569645121" />
+      <entry key="W1" value="5.952602740304968" />
     </decayedCancelled>
     <decayedSelected>
       <entry key="MS100" value="0.0" />
@@ -66,23 +59,23 @@
       <entry key="W1" value="0.0" />
     </decayedSelected>
     <decayedShown>
-      <entry key="MS100" value="1.6851915681165102" />
-      <entry key="MS500" value="2.5723168109955825" />
-      <entry key="S2" value="2.880591995234641" />
-      <entry key="S5" value="2.951130196472503" />
-      <entry key="S10" value="2.975376324629895" />
-      <entry key="S30" value="2.991749748021453" />
-      <entry key="S60" value="2.9958695531149004" />
-      <entry key="M2" value="2.9979334844174943" />
-      <entry key="M5" value="3.00027197619915" />
-      <entry key="M10" value="3.0327364139485757" />
-      <entry key="M15" value="3.1029184723705656" />
-      <entry key="M30" value="3.321100636255123" />
-      <entry key="H1" value="3.566710120151868" />
-      <entry key="H2" value="3.7528128297003462" />
-      <entry key="H4" value="3.8676505002563055" />
-      <entry key="D1" value="3.9766170393747835" />
-      <entry key="W1" value="3.996625617380117" />
+      <entry key="MS100" value="0.9683084310318001" />
+      <entry key="MS500" value="1.4561345898225218" />
+      <entry key="S2" value="1.8239680449997846" />
+      <entry key="S5" value="1.925608102438631" />
+      <entry key="S10" value="1.96210680334874" />
+      <entry key="S30" value="1.9872106948039872" />
+      <entry key="S60" value="1.993585357855899" />
+      <entry key="M2" value="1.9967876656847603" />
+      <entry key="M5" value="1.9987138616622218" />
+      <entry key="M10" value="1.9993996931121627" />
+      <entry key="M15" value="2.0013877997546152" />
+      <entry key="M30" value="2.080145071298624" />
+      <entry key="H1" value="2.5547043386781216" />
+      <entry key="H2" value="3.4800623861749127" />
+      <entry key="H4" value="4.428912410051278" />
+      <entry key="D1" value="5.679946283607224" />
+      <entry key="W1" value="5.952602544200309" />
     </decayedShown>
   </component>
   <component name="ProjectColorInfo">{
