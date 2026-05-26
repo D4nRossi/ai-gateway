@@ -107,6 +107,13 @@ az keyvault secret set `
   --vault-name danieldev `
   --name AZURE-CS-API-KEY `
   --value "MEU-VALOR-AQUI"
+
+# Azure AI Language PII (opcional — Tier 2/3, ADR-0019)
+# Azure Portal → seu recurso de Language → Keys and Endpoint
+az keyvault secret set `
+  --vault-name danieldev `
+  --name AZURE-LANGUAGE-API-KEY `
+  --value "MEU-VALOR-AQUI"
 ```
 
 > **Convenção de nome**: Key Vault só aceita `[a-zA-Z0-9-]`. Por isso usamos

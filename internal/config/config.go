@@ -34,10 +34,27 @@ type Config struct {
 	Server             ServerConfig              `yaml:"server"`
 	AzureOpenAI        AzureOpenAIConfig         `yaml:"azure_openai"`
 	AzureContentSafety *AzureContentSafetyConfig `yaml:"azure_content_safety,omitempty"`
+	AzureLanguage      *AzureLanguageConfig      `yaml:"azure_language,omitempty"`
 	Database           DatabaseConfig            `yaml:"database"`
 	Logging            LoggingConfig             `yaml:"logging"`
 	Models             []ModelConfig             `yaml:"models"`
 	Applications       []ApplicationConfig       `yaml:"applications"`
+}
+
+// AzureLanguageConfig holds optional Azure AI Language PII settings.
+// When this section is absent, Tier 2 and Tier 3 skip the remote PII step
+// (the regex-based masking still runs). When present, Tier 2 runs fail-open
+// and Tier 3 runs fail-closed (ADR-0019).
+type AzureLanguageConfig struct {
+	Endpoint   string `yaml:"endpoint"`
+	APIKey     string `yaml:"api_key"`
+	APIVersion string `yaml:"api_version"`
+	// TimeoutMs is the per-request budget for the Analyze Text call.
+	// Default 1500ms (set in main.go when 0).
+	TimeoutMs int `yaml:"timeout_ms"`
+	// Language is the BCP-47 tag for the model selection. Default "pt-BR"
+	// (applied in the client when empty).
+	Language string `yaml:"language"`
 }
 
 // ServerConfig holds HTTP server tuning parameters.
@@ -315,6 +332,18 @@ func (c *Config) Validate() error {
 		}
 		if cs.APIVersion == "" {
 			errs = append(errs, errors.New("azure_content_safety.api_version is required when section is present"))
+		}
+	}
+
+	if al := c.AzureLanguage; al != nil {
+		if al.Endpoint == "" {
+			errs = append(errs, errors.New("azure_language.endpoint is required when section is present"))
+		}
+		if al.APIKey == "" {
+			errs = append(errs, errors.New("azure_language.api_key is required when section is present"))
+		}
+		if al.APIVersion == "" {
+			errs = append(errs, errors.New("azure_language.api_version is required when section is present"))
 		}
 	}
 

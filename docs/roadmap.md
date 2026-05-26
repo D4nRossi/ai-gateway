@@ -80,44 +80,127 @@ Ordem fechada em conversa anterior. Cada onda é um PR independente com critéri
 
 **Critério de done:** request `POST /v1/proxy/{slug}/chat/completions` body `{"model":"gpt-4.1","messages":[...]}` chega no Azure pelo deployment correto. Endpoint `custom` continua passthrough idêntico.
 
-### Onda 3 — Azure Key Vault
+### Onda 3 — Azure Key Vault (concluída)
 
-**Pedido:** mover segredos do `.env` pro `https://danieldev.vault.azure.net/`, usando `DefaultAzureCredential` (decidido em conversa).
+Entregue. ADR-0018 + `internal/infra/keyvault/` + sintaxe `${kv:NAME}` no
+YAML resolvida por `os.Expand` customizado (preserva markers KV durante a
+expansão de env). Cache em memória RWMutex+TTL (default 5 min, lazy
+refresh). `DefaultAzureCredential` cobre dev (`az login`) e prod (Managed
+Identity).
 
-**Escopo:**
-- Dependências: `azidentity` + `azsecrets` do Azure SDK for Go (precisa ADR-0018)
-- `internal/infra/keyvault/` com client + cache LRU + TTL configurável (default 5min)
-- Loader de config aceita `${kv:NOME-DO-SECRET}` além de `${VAR}`
-- `KEYVAULT_URI` opcional no `.env`; se ausente, `${kv:…}` falha no boot com mensagem clara
-- Nova doc `docs/keyvault-setup.md`: como cadastrar credenciais (CLI + RBAC role do user), como `az login` em dev, como Managed Identity em prod
-- README + `.env.example` atualizados
+Hotfix dentro da onda: `os.ExpandEnv` consumia `${kv:…}` como env var e
+substituía por string vazia antes do resolver KV ver — sintoma era
+`Validate()` reclamando "is required" mesmo com secrets cadastrados no
+vault. Corrigido com `expandEnvPreservingKV` + 2 testes de regressão.
 
-**Critério de done:** substituir `AZURE_OPENAI_API_KEY` no `.env` por `${kv:AZURE-OPENAI-API-KEY}` no YAML, remover do `.env`, gateway sobe normal.
+Bug pré-existente corrigido oportunisticamente: fixture
+`baseValidConfig` faltava `EncryptionKeyHex` (quebrado desde ADR-0012);
+`chatHandler` test helper não populava `Maskers` no `ChatDeps` (panic em
+`nil.Mask` nos load tests). Suite 100% verde pela primeira vez.
 
-### Onda 4 — Azure Language PII
+Migrados: `AZURE_OPENAI_API_KEY`, `DB_ENCRYPTION_KEY`, `DATABASE_URL`,
+`AZURE_CS_API_KEY` (opcional).
 
-**Pedido:** detecção de PII complementar (cobre o que regex não pega), endpoint `https://tp-language-pii.cognitiveservices.azure.com/`. Tier 2 fail-open, Tier 3 fail-closed (decidido em conversa).
+Conseqüência operacional descoberta na validação: rotacionar
+`DB_ENCRYPTION_KEY` no KV invalida targets já cadastrados (AES-GCM
+detecta com "authentication tag mismatch"). Mitigação imediata:
+recadastrar targets. Resolução de longo prazo na Onda 4.5 abaixo.
 
-**Escopo:**
-- `internal/security/azlanguage/` — cliente `/language/:analyze-text?api-version=2024-11-01` com `kind=PiiEntityRecognition`
-- Nova seção `azure_language` no YAML, com chave puxada do KV (depende da Onda 3)
-- Pipeline em `chat.go`: roda em paralelo (goroutine) com masking local; substitui no body antes do call provider
-- Novo evento audit `pii_detected_remote` (separado de `pii_masked` regex)
-- ADR-0019 com análise de latência (timeout default 1500ms)
+### Onda 4.5 — Target credentials no Key Vault (anotada, não iniciada)
 
-**Critério de done:** request Tier 2 com PII que regex não pega aparece mascarada no body enviado. Tier 3 bloqueia (503) quando Language está fora.
+**Pedido (descoberto durante validação da Onda 3):** ao cadastrar
+endpoint/target via admin UI, salvar a credencial diretamente no Key Vault
+e guardar no DB apenas uma referência (nome do secret). Elimina o
+`DB_ENCRYPTION_KEY` como ponto único de falha e remove segredo do dump do
+Postgres.
 
-### Onda 5 — UI
+**Escopo previsto:**
+- ADR-0020 (parcial supersede do ADR-0012; AES continua válido pra
+  ambientes sem KV)
+- Schema: nova coluna `proxy_targets.kv_secret_name TEXT NULL`. Fallback
+  pro modo legacy (`auth_config_enc` AES) quando NULL — coexistência
+  durante migração
+- `AddTarget`: gera nome único (`gw-target-{uuid}`), `SetSecret` no KV,
+  salva nome no DB. Saga simples: KV primeiro, DB depois (se DB falhar,
+  KV vira órfão e expira no soft-delete; aceito)
+- `UpdateTarget`: overwrite no nome existente (idempotente)
+- `RemoveTarget`: soft-delete no KV (90 dias). Nome com UUID evita
+  colisão pós-recovery
+- `loadTargets`: detecta `kv_secret_name`, busca do KV; senão decripta
+  legacy
+- CLI `cmd/migrate-targets-to-kv` para mover targets existentes em batch
+- Permissão escalada do gateway no KV: `Secrets Officer` (write/delete)
+  no role assignment, não só `User`
 
-**Pedido:** modal de Token Gerado ilegível no dark mode + modal lenta abrindo + playground reformulado pra refletir Onda 2.
+**Trade-offs já identificados:**
+- (+) Resolve a quebra de targets em rotação do DB_ENCRYPTION_KEY
+- (+) Auditoria nativa Azure Monitor por target
+- (+) Postgres dump sem segredos
+- (-) Superfície de ataque maior (write permission no KV)
+- (-) Não atômico (KV + DB são stores separados); aceitar saga e órfãos
+- (-) Soft-delete de 7-90 dias do KV exige naming com UUID
 
-**Escopo:**
-- Investigar `web/src/pages/Applications.tsx` / `ApplicationDetail.tsx` — buscar classes sem variante dark
-- Profiler React DevTools no modal → identificar re-renders desnecessários
-- Playground: novos campos quando endpoint é Azure (depende da Onda 2)
-- Atualização do `console-roadmap.md`
+Não está na fila imediata — Onda 4 (Language PII) e Onda 5 (UI) vêm
+primeiro.
 
-**Critério de done:** modal legível em ambos os temas (contraste WCAG AA mínimo), abre em <50ms medido. Playground com Azure não exige path manual.
+### Onda 4 — Azure Language PII (concluída)
+
+Entregue. ADR-0019 + `internal/security/azlanguage/` (cliente HTTP com
+keep-alive, `UnicodeCodePoint` offsets pra preservar acentuação correta).
+Pipeline sequencial: regex local primeiro (sub-ms), Language depois no
+body já mascarado. Categorias amplas (default Azure: Person, Address,
+DateTime, Email, PhoneNumber, IPAddress, BRCPFNumber, BRLegalEntityNumber,
+CreditCard, etc.). Tier 2 fail-open, Tier 3 fail-closed.
+
+Eventos audit novos: `pii_detected_remote` (info — quantas categorias
+substituídas), `pii_remote_unavailable` (warn em Tier 2, error em Tier 3).
+
+7 testes de cliente (happy path, no entities, 401, timeout, empty docs,
+out-of-bounds offset, sort descending). Suite 100% verde.
+
+Para ativar: criar secret `AZURE-LANGUAGE-API-KEY` no KV (ver
+[keyvault-setup.md](keyvault-setup.md)), setar `AZURE_LANGUAGE_ENDPOINT`
+no `.env`, descomentar seção `azure_language` no `gateway.yaml`. Quando
+ausente, etapa é skipped silenciosamente.
+
+### Onda 5 — UI (concluída)
+
+Entregue em 4 sub-frentes integradas:
+
+**5A — Form de endpoint Azure com `provider_config`**
+Tipo `ProxyEndpoint.provider_config` no `api.ts`. Form ganha bloco
+"Configuração Azure OpenAI" (aparece quando `provider_kind=azure_openai`)
+com input `api_version` + tabela editável `model → deployment` (add/remove
+linhas). Validação client-side antecipa o 400 do backend e desabilita o
+botão Criar com toast explicativo. Helpers `azureConfigToProviderConfig` +
+`providerConfigToAzureConfig` traduzem entre o shape JSONB e o state do
+form. **Desbloqueia criação de endpoint Azure pela UI** (antes só dava
+via PUT manual no curl/Invoke-RestMethod).
+
+**5B — Playground modo canônico para Azure**
+Quando endpoint selecionado é `azure_openai`: esconde campo path raw,
+mostra dropdown "Model" populado de `provider_config.model_to_deployment`,
+body OpenAI-style auto-gerado com `defaultAzureBody(model)`. Trocar o
+modelo atualiza o campo `"model"` no body sem perder o resto. Endpoints
+`custom` mantêm o modo "raw" (path livre, body livre).
+
+**5C — Alert legível em ambos os temas**
+`components/ui/alert.tsx`: variants `destructive`/`warning`/`success`
+não usam mais `text-*-foreground` (que é a cor de **contraste do
+fundo sólido** e fica errada em fundo `bg-*/10` translúcido). Agora usam
+`text-foreground` (cor de texto principal, theme-aware), mantendo só o
+border e o ícone na cor do variant. Resolve a queixa do modal de Token
+Gerado ilegível no dark mode.
+
+**5D — Modal mais rápida ao abrir**
+`components/ui/dialog.tsx`: removido `backdrop-blur-md` do `DialogContent`
+e trocado `bg-card/95` por `bg-card` (opaco). `duration-200` →
+`duration-150`. Em hardware integrado, backdrop-blur custa ~80-150ms por
+frame durante o open/close — somava como "lag" perceptível. Overlay
+mantém `backdrop-blur-sm` (efeito visual desejado no fundo).
+
+Sem profile real ainda — se persistir, vira frente futura "Profile +
+investigation: modal perf".
 
 ---
 

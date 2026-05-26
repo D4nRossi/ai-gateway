@@ -9,8 +9,7 @@ Lotes incrementais. Cada lote é fechado com commit + validação (`go build`,
 |---|---|---|
 | **A** | Quality of life (search, refresh, detail pages, breadcrumbs, Cmd+K) | ✅ |
 | **A.6** | Provider Catalog (multi-provider, defaults inteligentes) | ✅ |
-| **Onda 2** | Path translation por `provider_kind` (UI: form de endpoint Azure + playground reformulado) | ⏳ próxima |
-| **Onda 5** | Modal dark mode + perf + playground OpenAI-style | ⏳ |
+| **Onda 5** | Form endpoint Azure + playground canônico + alert dark mode + dialog perf | ✅ |
 | B | Gestão de Models (CRUD + pricing) | ⏳ |
 | C | Dashboards visuais (gráficos timeseries) | ⏳ |
 | D | Segurança avançada (sessões, mudança de senha, 2FA opcional) | ⏳ |
@@ -23,6 +22,29 @@ Lotes incrementais. Cada lote é fechado com commit + validação (`go build`,
 > [`roadmap.md`](roadmap.md). A Onda 1 (hardening de tokens ASCII) já entrou em
 > produção; não tocou na UI, mas evita que tokens gerados de apps com nome
 > Unicode quebrem a autenticação no playground.
+
+---
+
+## Onda 5 — UI integrada com path translation + correções de tema
+
+Detalhes completos em [`roadmap.md`](roadmap.md) seção "Onda 5".
+
+Resumo:
+- **5A** — Form de endpoint Azure ganha bloco `provider_config` (api_version
+  + tabela model → deployment). Validação client-side; desabilita Criar
+  com toast explicativo quando incompleto. `web/src/lib/api.ts` tipa
+  `ProxyEndpoint.provider_config`. `web/src/pages/Endpoints.tsx` ganha
+  `AzureConfigFields` + helpers de tradução pro/do shape JSONB
+- **5B** — Playground passa pra modo canônico quando endpoint é Azure:
+  dropdown "Model" populado de `provider_config.model_to_deployment`,
+  body OpenAI-style auto-gerado. Endpoints `custom` mantêm modo raw
+- **5C** — `components/ui/alert.tsx` corrigido: variants
+  destructive/warning/success agora usam `text-foreground` em vez de
+  `text-*-foreground`. Texto fica legível em ambos os temas (era o bug
+  do modal de Token Gerado)
+- **5D** — `components/ui/dialog.tsx`: removido `backdrop-blur-md`,
+  trocado `bg-card/95` por `bg-card`, `duration-200` → `duration-150`.
+  Backdrop-blur em modal causa lag perceptível em GPU integrada
 
 ---
 

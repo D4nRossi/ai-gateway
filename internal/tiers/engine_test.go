@@ -18,6 +18,7 @@ func TestPipelineFor(t *testing.T) {
 			tier: "tier_1",
 			want: Pipeline{
 				RunLocalMasking:   true,
+				RunRemotePII:      false,
 				RunLocalInjection: false,
 				RunPromptShield:   false,
 				RunContentSafety:  false,
@@ -29,6 +30,7 @@ func TestPipelineFor(t *testing.T) {
 			tier: "tier_2",
 			want: Pipeline{
 				RunLocalMasking:   true,
+				RunRemotePII:      true,
 				RunLocalInjection: true,
 				RunPromptShield:   false,
 				RunContentSafety:  false,
@@ -40,6 +42,7 @@ func TestPipelineFor(t *testing.T) {
 			tier: "tier_3",
 			want: Pipeline{
 				RunLocalMasking:   true,
+				RunRemotePII:      true,
 				RunLocalInjection: true,
 				RunPromptShield:   true,
 				RunContentSafety:  true,
@@ -52,6 +55,7 @@ func TestPipelineFor(t *testing.T) {
 			tier: "tier_unknown",
 			want: Pipeline{
 				RunLocalMasking:   true,
+				RunRemotePII:      true,
 				RunLocalInjection: true,
 				RunPromptShield:   true,
 				RunContentSafety:  true,

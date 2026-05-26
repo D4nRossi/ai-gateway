@@ -208,11 +208,24 @@ export type ProviderKind =
   | "vllm"
   | "custom";
 
+/**
+ * provider_config carries kind-specific configuration that drives the path
+ * translator (ADR-0017). For `azure_openai` the expected shape is:
+ *
+ *   { api_version: string, model_to_deployment: Record<string, string> }
+ *
+ * For `custom` and other kinds without translator requirements, the field is
+ * an empty object. The backend validates the shape per-kind and rejects with
+ * 400 `invalid_provider_config` when fields are missing for azure_openai.
+ */
+export type ProviderConfig = Record<string, unknown>;
+
 export interface ProxyEndpoint {
   id: number;
   slug: string;
   name: string;
   provider_kind: ProviderKind;
+  provider_config: ProviderConfig;
   lb_strategy: LBStrategy;
   max_rps: number;
   max_monthly_requests: number;
@@ -342,6 +355,7 @@ export const api = {
     slug: string;
     name: string;
     provider_kind: ProviderKind;
+    provider_config?: ProviderConfig;
     lb_strategy: LBStrategy;
     max_rps: number;
     max_monthly_requests: number;
@@ -357,6 +371,7 @@ export const api = {
       slug: string;
       name: string;
       provider_kind: ProviderKind;
+      provider_config?: ProviderConfig;
       lb_strategy: LBStrategy;
       max_rps: number;
       max_monthly_requests: number;

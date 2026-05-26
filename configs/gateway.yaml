@@ -19,6 +19,16 @@ azure_openai:
 #   prompt_shield_timeout_ms: 1500
 #   content_safety_timeout_ms: 1500
 
+# Azure AI Language PII (ADR-0019) — camada complementar ao regex local em
+# Tier 2 (fail-open) e Tier 3 (fail-closed). Quando ausente, etapa é
+# skipped silenciosamente. Categorias detectadas: amplas (default Azure).
+azure_language:
+  endpoint: ${AZURE_LANGUAGE_ENDPOINT}
+  api_key: ${kv:AZURE-LANGUAGE-API-KEY}
+  api_version: "2024-11-01"
+  timeout_ms: 1500
+  language: pt-BR
+
 database:
   url: ${kv:DATABASE-URL}
   max_conns: 20

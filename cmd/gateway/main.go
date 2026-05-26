@@ -56,6 +56,7 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/proxy"
 	"github.com/D4nRossi/ai-gateway/internal/proxy/loadbalancer"
 	"github.com/D4nRossi/ai-gateway/internal/ratelimit"
+	"github.com/D4nRossi/ai-gateway/internal/security/azlanguage"
 	"github.com/D4nRossi/ai-gateway/internal/security/masking"
 	"github.com/D4nRossi/ai-gateway/internal/security/postvalidation"
 	"github.com/D4nRossi/ai-gateway/internal/security/promptshield"
@@ -217,6 +218,25 @@ func run() error {
 		logger.Info("azure content safety configured")
 	}
 
+	// ── 8a. Azure Language PII client (ADR-0019) ──────────────────────────────
+	// Optional: when the azure_language section is absent the chat pipeline
+	// silently skips the remote PII step for Tier 2/3 (regex masking still
+	// runs). When present, Tier 2 fails open on errors and Tier 3 fails closed.
+	var languageClient *azlanguage.Client
+	if al := cfg.AzureLanguage; al != nil {
+		langTimeout := time.Duration(al.TimeoutMs) * time.Millisecond
+		if langTimeout == 0 {
+			langTimeout = 1500 * time.Millisecond
+		}
+		languageClient = azlanguage.New(al.Endpoint, al.APIKey, al.APIVersion, al.Language, langTimeout)
+		logger.Info("azure language pii configured",
+			"endpoint", al.Endpoint,
+			"api_version", al.APIVersion,
+			"language", al.Language,
+			"timeout_ms", langTimeout.Milliseconds(),
+		)
+	}
+
 	// ── 9. Rate limiter ───────────────────────────────────────────────────────
 	rateMgr := ratelimit.NewManager()
 	for _, app := range cfg.Applications {
@@ -246,16 +266,17 @@ func run() error {
 		ProxyHandler: proxyHandler,
 		WebHandler:   web.Handler(),
 		ChatDeps: handlers.ChatDeps{
-			Provider:     prov,
-			Config:       cfg,
-			AuditWriter:  auditWriter,
-			UsageWriter:  usageWriter,
-			BudgetCheck:  budgetChecker,
-			BudgetCount:  budgetCounter,
-			ShieldClient: shieldClient,
-			Validator:    postvalidation.New(),
-			Logger:       logger,
-			Maskers:      maskers,
+			Provider:       prov,
+			Config:         cfg,
+			AuditWriter:    auditWriter,
+			UsageWriter:    usageWriter,
+			BudgetCheck:    budgetChecker,
+			BudgetCount:    budgetCounter,
+			ShieldClient:   shieldClient,
+			LanguageClient: languageClient,
+			Validator:      postvalidation.New(),
+			Logger:         logger,
+			Maskers:        maskers,
 		},
 	}
 

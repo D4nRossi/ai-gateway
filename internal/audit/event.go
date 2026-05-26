@@ -51,4 +51,14 @@ const (
 	// usage data (consumer did not set stream_options.include_usage or Azure
 	// omitted the usage chunk). References: SPEC.md §15.4.
 	EventStreamNoUsage = "stream_no_usage"
+	// EventPIIDetectedRemote is emitted when the Azure AI Language PII step
+	// (ADR-0019) detects one or more entities AFTER the local regex pass.
+	// Kept distinct from EventPIIMasked so operators can compare regex
+	// precision vs cloud precision and tune categories over time.
+	EventPIIDetectedRemote = "pii_detected_remote"
+	// EventPIIRemoteUnavailable is emitted when the Azure Language call fails
+	// (timeout, 5xx, network) — Tier 2 logs and continues (fail-open),
+	// Tier 3 also emits this event but additionally returns 503 to the
+	// consumer (fail-closed). ADR-0019.
+	EventPIIRemoteUnavailable = "pii_remote_unavailable"
 )

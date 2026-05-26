@@ -191,6 +191,69 @@ As migrations rodam automaticamente no boot (`db.RunMigrations`) e são idempote
 
 ---
 
+## Detecção de PII em duas camadas (ADR-0019)
+
+Tier 2 e Tier 3 rodam dois detectores **em sequência**, no body já mascarado:
+
+```
+prompt original
+   │
+   ▼
+RunLocalMasking (regex)               ← sub-ms, sempre
+   │  CPF/CNPJ (mod-11), cartão (Luhn),
+   │  e-mail, telefone BR, CEP
+   ▼
+body parcialmente mascarado
+   │
+   ▼
+RunRemotePII (Azure AI Language)      ← ~150-250ms p50, só Tier 2+
+   │  Person, Address, DateTime, Email,
+   │  PhoneNumber, IPAddress, BRCPFNumber,
+   │  BRLegalEntityNumber, CreditCard,
+   │  +20 outras categorias
+   ▼
+body totalmente mascarado → provider
+```
+
+### Por que sequencial e não paralelo
+
+Se rodassem em paralelo, o Language veria o texto **original** — incluindo
+CPF/cartão que o regex já ia mascarar. A cobrança e a latência ficam iguais,
+mas o resultado do Language traz duplicação que precisa ser merged. Rodando
+sequencial, o Language só processa o que regex perdeu: nomes próprios,
+endereços completos, datas em texto livre. Menos ruído, mais sinal.
+
+### Fail-open vs fail-closed
+
+| Tier | RunRemotePII | Comportamento em erro do Language |
+|---|---|---|
+| Tier 1 | não | (não chama) |
+| Tier 2 | sim | fail-open: emite `pii_remote_unavailable` warn no audit, segue request |
+| Tier 3 | sim | fail-closed: emite `pii_remote_unavailable` error no audit, 503 ao cliente |
+
+Quando `azure_language` está ausente do YAML, o `LanguageClient` é nil e a
+etapa é skipped silenciosamente — mesmo pra Tier 2/3. Útil pra dev local
+sem chave Azure ou pra ambientes que não querem custo cloud.
+
+### Placeholder format
+
+Em vez do `redactedText` que o Azure devolve (asteriscos), o cliente
+reconstrói o texto a partir do array `entities` substituindo cada span por
+`[CATEGORY_REDACTED]`. Mantém consistência com o regex local (que usa
+`[BR_CPF_REDACTED]`, `[PCI_CARD_REDACTED]`).
+
+Exemplo:
+```
+"Meu cliente João Silva mora em Belo Horizonte"
+       ↓ Language detecta Person + Address
+"Meu cliente [PERSON_REDACTED] mora em [ADDRESS_REDACTED]"
+```
+
+Offsets do Azure são pedidos como `UnicodeCodePoint` (== rune Go) pra
+acertar palavras com `ã/ç/é` sem precisar de conversão UTF-16/UTF-8.
+
+---
+
 ## Como a aplicação cliente chama o gateway
 
 Existem dois planos paralelos, mantidos por compatibilidade:

@@ -58,6 +58,7 @@ import {
   errToast,
   type AuthType,
   type LBStrategy,
+  type ProviderConfig,
   type ProviderKind,
   type ProxyEndpoint,
   type TargetAuthInput,
@@ -305,21 +306,80 @@ interface EndpointForm {
   slug: string;
   name: string;
   provider_kind: ProviderKind;
+  // azureConfig is the editable view of provider_config for azure_openai.
+  // Stored as ordered rows so the user can add/remove freely; serialized to
+  // the JSONB shape { api_version, model_to_deployment } at submit time.
+  azureConfig: AzureConfigForm;
   lb_strategy: LBStrategy;
   max_rps: number;
   max_monthly_requests: number;
   active: boolean;
 }
 
+interface AzureConfigForm {
+  apiVersion: string;
+  models: { model: string; deployment: string }[];
+}
+
+const EMPTY_AZURE_CONFIG: AzureConfigForm = {
+  apiVersion: "2025-01-01-preview",
+  models: [{ model: "", deployment: "" }],
+};
+
 const EMPTY_EP_FORM: EndpointForm = {
   slug: "",
   name: "",
   provider_kind: "custom",
+  azureConfig: EMPTY_AZURE_CONFIG,
   lb_strategy: "round_robin",
   max_rps: 0,
   max_monthly_requests: 0,
   active: true,
 };
+
+// azureConfigToProviderConfig turns the editable rows into the JSON shape the
+// backend expects. Empty rows are dropped silently so the operator doesn't have
+// to clean up trailing blanks.
+function azureConfigToProviderConfig(cfg: AzureConfigForm): ProviderConfig {
+  const mapping: Record<string, string> = {};
+  for (const row of cfg.models) {
+    const model = row.model.trim();
+    const deployment = row.deployment.trim();
+    if (model && deployment) mapping[model] = deployment;
+  }
+  return {
+    api_version: cfg.apiVersion.trim(),
+    model_to_deployment: mapping,
+  };
+}
+
+// providerConfigToAzureConfig reads back the saved JSONB into form state so
+// the user can edit an existing endpoint without losing the current mapping.
+// Tolerant to missing/empty fields — falls back to defaults.
+function providerConfigToAzureConfig(pc: ProviderConfig | undefined | null): AzureConfigForm {
+  const apiVersion =
+    typeof pc?.api_version === "string" && pc.api_version
+      ? (pc.api_version as string)
+      : "2025-01-01-preview";
+  const rawMap = (pc?.model_to_deployment ?? {}) as Record<string, unknown>;
+  const models = Object.entries(rawMap)
+    .filter(([, dep]) => typeof dep === "string")
+    .map(([model, deployment]) => ({ model, deployment: deployment as string }));
+  return {
+    apiVersion,
+    models: models.length > 0 ? models : [{ model: "", deployment: "" }],
+  };
+}
+
+// validateAzureConfig returns a non-empty message when the azure_openai
+// fields are not fully filled in. Used to block submit + show inline help.
+function validateAzureConfig(cfg: AzureConfigForm): string | null {
+  if (!cfg.apiVersion.trim()) return "api_version é obrigatório (ex: 2025-01-01-preview)";
+  const filled = cfg.models.filter((r) => r.model.trim() && r.deployment.trim());
+  if (filled.length === 0)
+    return "Adicione ao menos 1 mapeamento modelo → deployment";
+  return null;
+}
 
 /**
  * Auto-preenche name + lb_strategy quando o operador escolhe um provider.
@@ -328,9 +388,19 @@ const EMPTY_EP_FORM: EndpointForm = {
  */
 function formForProvider(provider: ProviderKind, prev: EndpointForm): EndpointForm {
   const meta = PROVIDERS[provider];
+  // Quando o operador troca para azure_openai, inicializamos com a config
+  // default (api_version + 1 linha vazia) só se ainda não houver mapping.
+  // Trocar para outro provider zera silenciosamente — o backend ignora
+  // provider_config quando kind != azure_openai e o operador não perde os
+  // campos preenchidos caso volte para Azure no mesmo session.
+  const azureConfig =
+    provider === "azure_openai" && prev.azureConfig.models.length === 0
+      ? EMPTY_AZURE_CONFIG
+      : prev.azureConfig;
   return {
     ...prev,
     provider_kind: provider,
+    azureConfig,
     // Mantém nome do usuário se já tiver digitado; senão usa label do provider.
     name: prev.name || meta.label,
     // Estratégia default sugerida pelo provider (e.g., least_connections para
@@ -380,6 +450,7 @@ function EndpointFormDialog({
         slug: existing.slug,
         name: existing.name,
         provider_kind: existing.provider_kind ?? "custom",
+        azureConfig: providerConfigToAzureConfig(existing.provider_config),
         lb_strategy: existing.lb_strategy,
         max_rps: existing.max_rps,
         max_monthly_requests: existing.max_monthly_requests,
@@ -406,23 +477,50 @@ function EndpointFormDialog({
   const showSuggestion =
     !!slugIssue && !!slugSuggested && slugSuggested !== form.slug && slugSuggested.length >= 2;
 
+  // Validação client-side da config Azure — espelha o que o backend valida
+  // em adminservice.validateProviderConfig. Antecipar aqui evita o round-trip
+  // 400 e dá feedback inline imediato.
+  const azureConfigIssue =
+    form.provider_kind === "azure_openai" ? validateAzureConfig(form.azureConfig) : null;
+
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     if (slugIssue) {
       toast.error("Identificador inválido", { description: slugIssue.message });
       return;
     }
+    if (azureConfigIssue) {
+      toast.error("Configuração Azure incompleta", { description: azureConfigIssue });
+      return;
+    }
+
+    // Monta o payload com provider_config quando aplicável.
+    // O backend exige provider_config válido pra azure_openai e ignora pra
+    // outros kinds — passar undefined deixa o backend usar o default {}.
+    const payload = {
+      slug: form.slug,
+      name: form.name,
+      provider_kind: form.provider_kind,
+      provider_config:
+        form.provider_kind === "azure_openai"
+          ? azureConfigToProviderConfig(form.azureConfig)
+          : undefined,
+      lb_strategy: form.lb_strategy,
+      max_rps: form.max_rps,
+      max_monthly_requests: form.max_monthly_requests,
+    };
+
     setSubmitting(true);
     try {
       if (existing) {
-        await api.updateEndpoint(existing.id, form);
+        await api.updateEndpoint(existing.id, { ...payload, active: form.active });
         toast.success("Endpoint atualizado");
         onSaved();
         return;
       }
 
       // Cria endpoint.
-      const created = await api.createEndpoint(form);
+      const created = await api.createEndpoint(payload);
 
       // Opcional: já cria primeiro target em sequência se o usuário marcou.
       if (firstTarget.enabled && firstTarget.url.trim()) {
@@ -580,6 +678,15 @@ function EndpointFormDialog({
               Irrelevante quando há só um target.
             </p>
           </div>
+
+          {form.provider_kind === "azure_openai" && (
+            <AzureConfigFields
+              config={form.azureConfig}
+              onChange={(c) => setForm({ ...form, azureConfig: c })}
+              disabled={submitting}
+              issue={azureConfigIssue}
+            />
+          )}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
@@ -790,7 +897,10 @@ function EndpointFormDialog({
             <Button type="button" variant="outline" onClick={onClose} disabled={submitting}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={submitting || !!slugIssue}>
+            <Button
+              type="submit"
+              disabled={submitting || !!slugIssue || !!azureConfigIssue}
+            >
               {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
               {existing ? "Salvar" : "Criar endpoint"}
             </Button>
@@ -798,6 +908,128 @@ function EndpointFormDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+// ── Azure Provider Config block ───────────────────────────────────────────────
+
+/**
+ * AzureConfigFields renders the api_version + model→deployment table that
+ * azure_openai endpoints require (ADR-0017). Lives only inside this form;
+ * not reusable elsewhere because the JSONB shape is per-kind.
+ *
+ * The mapping is shown as an editable list of (model, deployment) rows. Empty
+ * rows are dropped by azureConfigToProviderConfig at submit time, so an
+ * operator can leave a trailing blank row without breaking anything.
+ */
+function AzureConfigFields({
+  config,
+  onChange,
+  disabled,
+  issue,
+}: {
+  config: AzureConfigForm;
+  onChange: (c: AzureConfigForm) => void;
+  disabled: boolean;
+  issue: string | null;
+}) {
+  function setApiVersion(v: string) {
+    onChange({ ...config, apiVersion: v });
+  }
+  function setRow(idx: number, patch: Partial<{ model: string; deployment: string }>) {
+    const next = config.models.map((r, i) => (i === idx ? { ...r, ...patch } : r));
+    onChange({ ...config, models: next });
+  }
+  function addRow() {
+    onChange({ ...config, models: [...config.models, { model: "", deployment: "" }] });
+  }
+  function removeRow(idx: number) {
+    const next = config.models.filter((_, i) => i !== idx);
+    onChange({
+      ...config,
+      // sempre manter ao menos uma linha pro form não ficar com tabela vazia
+      models: next.length > 0 ? next : [{ model: "", deployment: "" }],
+    });
+  }
+
+  return (
+    <div className="rounded-md border border-border bg-card/40 p-4 space-y-3">
+      <div>
+        <Label className="text-sm font-medium">Configuração Azure OpenAI</Label>
+        <p className="mt-0.5 text-[11px] text-muted-foreground">
+          Cliente chama{" "}
+          <code className="font-mono">POST /v1/proxy/{"{slug}"}/chat/completions</code>{" "}
+          com body OpenAI-style. O gateway traduz para o caminho Azure usando o
+          mapeamento abaixo (ADR-0017).
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="api-version">API version</Label>
+        <Input
+          id="api-version"
+          value={config.apiVersion}
+          onChange={(e) => setApiVersion(e.target.value)}
+          placeholder="2025-01-01-preview"
+          disabled={disabled}
+          className="font-mono text-xs"
+        />
+        <p className="text-[11px] text-muted-foreground">
+          Vai como <code className="font-mono">?api-version=...</code> na URL final.
+        </p>
+      </div>
+
+      <div className="space-y-2">
+        <Label>Modelos disponíveis</Label>
+        <div className="space-y-2">
+          {config.models.map((row, idx) => (
+            <div key={idx} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+              <Input
+                value={row.model}
+                onChange={(e) => setRow(idx, { model: e.target.value })}
+                placeholder="model (ex: gpt-4.1)"
+                disabled={disabled}
+                className="font-mono text-xs"
+              />
+              <Input
+                value={row.deployment}
+                onChange={(e) => setRow(idx, { deployment: e.target.value })}
+                placeholder="deployment no Azure (ex: gpt-4.1)"
+                disabled={disabled}
+                className="font-mono text-xs"
+              />
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => removeRow(idx)}
+                disabled={disabled}
+                aria-label={`Remover linha ${idx + 1}`}
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          onClick={addRow}
+          disabled={disabled}
+        >
+          <Plus className="h-3 w-3" />
+          Adicionar modelo
+        </Button>
+        <p className="text-[11px] text-muted-foreground">
+          Nome lógico (o que o cliente envia em <code className="font-mono">"model"</code>) →
+          nome do deployment criado no Azure AI Foundry. Geralmente iguais, mas
+          podem divergir em blue/green ou deployments com sufixos.
+        </p>
+      </div>
+
+      {issue && <p className="text-[11px] text-destructive">{issue}</p>}
+    </div>
   );
 }
 

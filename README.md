@@ -180,7 +180,7 @@ Três aplicações genéricas pré-configuradas em `configs/gateway.yaml`:
 | [Manutenção](docs/maintenance.md) | Adicionar apps, rotacionar chaves, migrations, SQL de monitoramento |
 | [Azure Key Vault](docs/keyvault-setup.md) | Setup do KV, permissionamento, sintaxe `${kv:NAME}` no YAML |
 | [Roadmap](docs/roadmap.md) | Estado atual, ondas em execução, frentes futuras |
-| [ADRs](docs/adrs/) | Decisões arquiteturais registradas (ADR-0001 a ADR-0018) |
+| [ADRs](docs/adrs/) | Decisões arquiteturais registradas (ADR-0001 a ADR-0019) |
 
 ## Endpoints
 

@@ -42,7 +42,13 @@ const DialogContent = React.forwardRef<
         // maior passa `max-w-XYZ` no className (ou style inline pra sobrescrever
         // sem batalhar com tailwind-merge). Limite duro: 95vw na largura mínima
         // calc(100vw-2rem) para sempre ter respiro nas bordas em mobile.
-        "fixed left-[50%] top-[50%] z-50 grid translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-card/95 p-6 shadow-2xl shadow-black/50 backdrop-blur-md duration-200",
+        // bg-card é opaco propositalmente (não bg-card/95) para evitar o custo
+        // de compositing translúcido + backdrop-blur que o navegador faz por
+        // frame durante o open/close. Em hardware integrado, o blur do content
+        // soma ~80-150ms na abertura do modal — perceptível como "lag". O
+        // overlay (Overlay component) mantém backdrop-blur-sm porque o blur do
+        // fundo é o efeito visual desejado; o content em si fica sólido.
+        "fixed left-[50%] top-[50%] z-50 grid translate-x-[-50%] translate-y-[-50%] gap-4 border border-border bg-card p-6 shadow-2xl shadow-black/50 duration-150",
         "w-full max-w-[min(32rem,calc(100vw-2rem))]",
         "max-h-[90vh] overflow-y-auto overflow-x-hidden",
         "data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",

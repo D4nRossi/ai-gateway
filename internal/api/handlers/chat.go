@@ -17,6 +17,7 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/config"
 	"github.com/D4nRossi/ai-gateway/internal/observability"
 	"github.com/D4nRossi/ai-gateway/internal/providers"
+	"github.com/D4nRossi/ai-gateway/internal/security/azlanguage"
 	"github.com/D4nRossi/ai-gateway/internal/security/masking"
 	"github.com/D4nRossi/ai-gateway/internal/security/postvalidation"
 	"github.com/D4nRossi/ai-gateway/internal/security/promptshield"
@@ -43,8 +44,14 @@ type ChatDeps struct {
 	BudgetCheck  budget.PreChecker
 	BudgetCount  budget.Recorder
 	ShieldClient *promptshield.Client     // nil if azure_content_safety not configured
-	Validator    *postvalidation.Validator
-	Logger       *slog.Logger
+	// LanguageClient is the Azure AI Language PII detector (ADR-0019).
+	// Nil when azure_language section is absent from gateway.yaml — in that
+	// case the chat pipeline silently skips the remote PII step regardless
+	// of pipe.RunRemotePII. Present + error during call follows pipe.FailMode:
+	// Tier 2 logs warn and continues; Tier 3 emits audit and returns 503.
+	LanguageClient *azlanguage.Client
+	Validator      *postvalidation.Validator
+	Logger         *slog.Logger
 
 	// Maskers holds one pre-built Masker per tier key ("tier_1", "tier_2", "tier_3").
 	// Masker instances are safe for concurrent use; detector regex patterns are
@@ -127,6 +134,71 @@ func Chat(deps ChatDeps) http.HandlerFunc {
 					Metadata: map[string]any{
 						"categories":         totalCats,
 						"total_replacements": totalReplace,
+					},
+					CreatedAt: time.Now().UTC(),
+				})
+			}
+		}
+
+		// Azure AI Language PII — runs on each message AFTER local masking,
+		// so the cloud only sees what regex left intact (ADR-0019).
+		// Skipped silently when LanguageClient is nil (azure_language not
+		// configured) or when the tier's pipeline opts out.
+		if pipe.RunRemotePII && deps.LanguageClient != nil {
+			remoteCats := map[string]int{}
+			remoteReplace := 0
+			var remoteErr error
+			for i, msg := range req.Messages {
+				if msg.Content == "" {
+					continue
+				}
+				res, err := deps.LanguageClient.Mask(ctx, msg.Content)
+				if err != nil {
+					remoteErr = err
+					break
+				}
+				if len(res.Entities) > 0 {
+					req.Messages[i].Content = res.Redacted
+					for c, n := range res.Categories {
+						remoteCats[c] += n
+					}
+					remoteReplace += len(res.Entities)
+				}
+			}
+			if remoteErr != nil {
+				if pipe.FailMode == "closed" {
+					deps.AuditWriter.Emit(audit.AuditEvent{
+						RequestID: rid, ApplicationName: policy.Name,
+						EventType: audit.EventPIIRemoteUnavailable, Severity: "error",
+						Metadata:  map[string]any{"reason": "azure_language_unavailable"},
+						CreatedAt: time.Now().UTC(),
+					})
+					reqLogger.Error("azure language unavailable, failing closed",
+						"err", remoteErr,
+						"event_type", audit.EventPIIRemoteUnavailable,
+					)
+					writeJSONError(w, http.StatusServiceUnavailable, "blocked_by_security", "security_error")
+					return
+				}
+				// Tier 2 fail-open: emit warn audit, continue with whatever
+				// regex already masked.
+				deps.AuditWriter.Emit(audit.AuditEvent{
+					RequestID: rid, ApplicationName: policy.Name,
+					EventType: audit.EventPIIRemoteUnavailable, Severity: "warn",
+					Metadata:  map[string]any{"reason": "azure_language_unavailable"},
+					CreatedAt: time.Now().UTC(),
+				})
+				reqLogger.Warn("azure language unavailable, failing open",
+					"err", remoteErr,
+					"event_type", audit.EventPIIRemoteUnavailable,
+				)
+			} else if remoteReplace > 0 {
+				deps.AuditWriter.Emit(audit.AuditEvent{
+					RequestID: rid, ApplicationName: policy.Name,
+					EventType: audit.EventPIIDetectedRemote, Severity: "info",
+					Metadata: map[string]any{
+						"categories":         remoteCats,
+						"total_replacements": remoteReplace,
 					},
 					CreatedAt: time.Now().UTC(),
 				})
