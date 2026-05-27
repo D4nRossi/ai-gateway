@@ -82,16 +82,28 @@ func run() error {
 	// When KEYVAULT_URI is set, the config loader can resolve ${kv:NAME}
 	// placeholders against Azure Key Vault. When unset, ${kv:NAME} markers in
 	// the YAML are a fatal config error (ADR-0018, fail-fast policy).
+	//
+	// Diagnostic logging is emitted via slog default (the request-scoped logger
+	// is not initialized yet at this point — config validation depends on KV).
+	// Without this signal, "database.password is required" errors become hard
+	// to diagnose: the operator can't tell if the KV resolver was wired up at
+	// all, or if it failed silently.
 	bootCtx, bootCancel := context.WithCancel(context.Background())
 	defer bootCancel()
 
 	var secretResolver config.SecretResolver
-	if vaultURL := os.Getenv("KEYVAULT_URI"); vaultURL != "" {
+	vaultURL := os.Getenv("KEYVAULT_URI")
+	if vaultURL != "" {
 		kvClient, err := keyvault.New(vaultURL)
 		if err != nil {
 			return fmt.Errorf("initializing Azure Key Vault client: %w", err)
 		}
 		secretResolver = kvClient
+		slog.Info("key vault resolver initialized", "vault_url", vaultURL)
+	} else {
+		slog.Warn("KEYVAULT_URI is empty or unset — ${kv:NAME} references in gateway.yaml will fail to resolve. " +
+			"Check that the .env file is loaded by your runner (GoLand EnvFile plugin, or shell export) " +
+			"and that KEYVAULT_URI=https://<vault-name>.vault.azure.net is set.")
 	}
 
 	// ── 2. Load + validate config ─────────────────────────────────────────────

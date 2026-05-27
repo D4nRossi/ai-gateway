@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -41,8 +42,9 @@ type azClient interface {
 // hot secrets do not block each other; only the actual fetch on a miss takes
 // the write lock.
 type Client struct {
-	az  azClient
-	ttl time.Duration
+	az     azClient
+	ttl    time.Duration
+	logger *slog.Logger
 
 	mu    sync.RWMutex
 	cache map[string]entry
@@ -77,9 +79,10 @@ func New(vaultURL string) (*Client, error) {
 	}
 
 	return &Client{
-		az:    azc,
-		ttl:   DefaultCacheTTL,
-		cache: make(map[string]entry),
+		az:     azc,
+		ttl:    DefaultCacheTTL,
+		logger: slog.Default(),
+		cache:  make(map[string]entry),
 	}, nil
 }
 
@@ -87,6 +90,16 @@ func New(vaultURL string) (*Client, error) {
 // tests and tuning; not meant for runtime use.
 func (c *Client) WithTTL(ttl time.Duration) *Client {
 	c.ttl = ttl
+	return c
+}
+
+// WithLogger replaces the default slog logger. When unset, the client uses
+// slog.Default() which is fine for boot-time but a request-scoped logger is
+// preferable later.
+func (c *Client) WithLogger(logger *slog.Logger) *Client {
+	if logger != nil {
+		c.logger = logger
+	}
 	return c
 }
 
@@ -107,14 +120,26 @@ func (c *Client) Get(ctx context.Context, name string) (string, error) {
 	e, ok := c.cache[name]
 	c.mu.RUnlock()
 	if ok && now.Before(e.expiresAt) {
+		c.log().Debug("key vault: cache hit", "secret_name", name)
 		return e.value, nil
 	}
 
 	resp, err := c.az.GetSecret(ctx, name, "", nil)
+	latency := time.Since(now)
 	if err != nil {
+		// Diagnostic log: name is not a secret, latency reveals timeout vs 403/404.
+		c.log().Error("key vault: fetch failed",
+			"secret_name", name,
+			"latency_ms", latency.Milliseconds(),
+			"err", err,
+		)
 		return "", fmt.Errorf("fetching secret %q from key vault: %w", name, err)
 	}
 	if resp.Value == nil || *resp.Value == "" {
+		c.log().Error("key vault: secret exists but value is empty",
+			"secret_name", name,
+			"latency_ms", latency.Milliseconds(),
+		)
 		return "", fmt.Errorf("secret %q: %w", name, ErrEmptyValue)
 	}
 
@@ -123,7 +148,24 @@ func (c *Client) Get(ctx context.Context, name string) (string, error) {
 	c.cache[name] = entry{value: value, expiresAt: now.Add(c.ttl)}
 	c.mu.Unlock()
 
+	// Log the success without ever exposing the value. Length is safe and
+	// useful for triage ("did we get 0 chars or 16?").
+	c.log().Info("key vault: secret fetched",
+		"secret_name", name,
+		"value_length", len(value),
+		"latency_ms", latency.Milliseconds(),
+	)
 	return value, nil
+}
+
+// log returns the logger, falling back to slog.Default() when c.logger is nil.
+// Defends against test fixtures that build the Client struct literally without
+// going through New() (which always sets a default logger).
+func (c *Client) log() *slog.Logger {
+	if c.logger != nil {
+		return c.logger
+	}
+	return slog.Default()
 }
 
 // Compile-time assertion: Client implements SecretGetter.

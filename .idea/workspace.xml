@@ -4,15 +4,7 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/SPEC.md" beforeDir="false" afterPath="$PROJECT_DIR$/SPEC.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/handoff.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/handoff.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/how-it-works.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/how-it-works.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/keyvault-setup.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/keyvault-setup.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/local-development.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/local-development.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/maintenance.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/maintenance.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/roadmap.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/roadmap.md" afterDir="false" />
-    </list>
+    <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
