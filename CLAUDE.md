@@ -159,18 +159,21 @@ Para **toda** tarefa de implementação (novo bloco, correção, refatoração),
 | Pacote | Versão | Propósito | URL oficial |
 |---|---|---|---|
 | `github.com/go-chi/chi/v5` | v5.x | HTTP router | https://github.com/go-chi/chi |
-| `github.com/jackc/pgx/v5` | v5.x | Postgres driver | https://github.com/jackc/pgx |
-| `github.com/jackc/pgx/v5/pgxpool` | v5.x | Postgres connection pool | https://pkg.go.dev/github.com/jackc/pgx/v5/pgxpool |
-| `github.com/golang-migrate/migrate/v4` | v4.x | DB migrations | https://github.com/golang-migrate/migrate |
+| `github.com/microsoft/go-mssqldb` | última v1.x estável | SQL Server driver (via `database/sql`) — ADR-0022 | https://github.com/microsoft/go-mssqldb |
+| `github.com/golang-migrate/migrate/v4` | v4.x | DB migrations (com driver `sqlserver`) | https://github.com/golang-migrate/migrate |
 | `gopkg.in/yaml.v3` | v3.x | YAML config parsing | https://pkg.go.dev/gopkg.in/yaml.v3 |
 | `github.com/google/uuid` | v1.x | UUID generation | https://pkg.go.dev/github.com/google/uuid |
 | `golang.org/x/time/rate` | latest stable | Token bucket rate limiter | https://pkg.go.dev/golang.org/x/time/rate |
+| `github.com/Azure/azure-sdk-for-go/sdk/azidentity` | v1.x | Auth Azure (KV) — ADR-0018 | https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/azidentity |
+| `github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets` | v1.x | Cliente Key Vault Secrets — ADR-0018 | https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets |
+| `golang.org/x/crypto/bcrypt` | latest stable | Hash de senhas admin — ADR-0011 | https://pkg.go.dev/golang.org/x/crypto/bcrypt |
 
 ### 4.3 Bibliotecas standard library obrigatórias
 - `log/slog` (logger oficial, **não** usar `log` antigo nem `zap`)
 - `context`
 - `net/http`
 - `encoding/json`
+- `database/sql` (interface stdlib usada por `microsoft/go-mssqldb` — ADR-0022)
 - `crypto/sha256`
 - `crypto/subtle`
 - `encoding/hex`
@@ -180,16 +183,17 @@ Para **toda** tarefa de implementação (novo bloco, correção, refatoração),
 - `sync`
 
 ### 4.4 Imagens Docker
-- `postgres:17-alpine` (não `latest`, não outra major)
 - `golang:1.24-alpine` (build stage)
 - `alpine:3.21` (runtime stage)
+- Banco de dados: SQL Server corporativo (`BRSPVPDEV003` em homologação) — não roda em container local; ADR-0022 documenta a decisão e fallback eventual via `mcr.microsoft.com/mssql/server` se dev offline for necessário no futuro
 
 ### 4.5 Bibliotecas explicitamente **proibidas**
 - `github.com/sirupsen/logrus`, `go.uber.org/zap` (usar `slog`)
 - `github.com/gorilla/mux` (usar `chi`)
-- `github.com/jmoiron/sqlx`, `database/sql` (usar `pgx` direto)
+- `github.com/jmoiron/sqlx` (usar `database/sql` + driver direto, sem wrapper)
+- `github.com/jackc/pgx/v5` (legado Phase 1 — substituído por `microsoft/go-mssqldb` na ADR-0022; migrations PG preservadas em `migrations/postgres-legacy/`)
 - `github.com/joho/godotenv` (carregar `.env` via Docker Compose ou shell)
-- Qualquer ORM (GORM, Ent, etc.) — querys SQL diretas com `pgx`
+- Qualquer ORM (GORM, Ent, etc.) — querys SQL diretas com `database/sql`
 - Qualquer biblioteca não listada em 4.2 sem ADR aprovado
 
 ---
@@ -459,25 +463,53 @@ Cada ADR consolidando o que SPEC.md decide, com seção "Options considered" e "
 
 ---
 
-## 9. Convenções de Postgres / SQL
+## 9. Convenções de banco de dados / SQL Server T-SQL
 
 ### 9.1 Queries
-- **Sempre** parameterizadas (`$1, $2, ...`). Nunca `fmt.Sprintf` em SQL.
+- **Sempre** parameterizadas. Driver `microsoft/go-mssqldb` aceita binding nomeado `@p1, @p2, ...` (preferido neste projeto) ou posicional `?`. Nunca `fmt.Sprintf` em SQL.
+- Convenção do projeto: `@p1, @p2, ...` em ordem de aparição na query.
 - Multi-linha com backticks Go, indentação clara.
 - Comentário acima de cada query não trivial explicando intenção.
+- **Schema qualificado**: toda referência a tabela usa `gogateway.NomeTabela`. Nunca depender do default schema do user — o banco de homologação é compartilhado e o user de serviço pode ter outro default.
 
 ### 9.2 Migrations
-- `golang-migrate` é o oficial.
+- `golang-migrate` é o oficial; driver `github.com/golang-migrate/migrate/v4/database/sqlserver`.
 - Arquivos: `NNN_descricao.up.sql` + `NNN_descricao.down.sql`. Numeração sequencial.
 - Toda migration `up` tem migration `down` correspondente que reverte exatamente. Não criar `up` sem `down`.
 - Migrations rodam **no boot** da aplicação (idempotente via `ErrNoChange`).
+- **Migrations devem ser self-healing**: usar `IF NOT EXISTS` / `IF EXISTS` em CREATE/DROP; cleanup CTE-then-CREATE para constraints que podem encontrar dados sujos pré-existentes (ver migration 009 portada de PG, conforme ADR-0022). O `migrations/001_init.up.sql` em T-SQL DEVE incluir `CREATE SCHEMA gogateway` idempotente como passo zero.
 
 ### 9.3 Naming
-- Tabelas: `snake_case`, plural (`usage_events`, `audit_events`).
+- Tabelas: `snake_case`, plural, **qualificadas pelo schema** (`gogateway.usage_events`, `gogateway.audit_events`).
 - Colunas: `snake_case` (`application_name`, `created_at`).
 - Índices: `idx_<tabela>_<colunas>` (`idx_usage_app_created`).
-- PKs: `id BIGSERIAL`.
-- Timestamps: `TIMESTAMPTZ` (com fuso), default `NOW()`.
+- PKs: `id BIGINT IDENTITY(1,1) PRIMARY KEY` (substitui `BIGSERIAL` do Postgres legacy).
+- Timestamps: `DATETIMEOFFSET` (com fuso), default `SYSUTCDATETIME()` (substitui `TIMESTAMPTZ` / `NOW()`).
+- Booleans: `BIT` (0/1) — Go bool mapeia direto via driver.
+- Strings: `NVARCHAR(n)` para tamanho fixo, `NVARCHAR(MAX)` para texto longo (Unicode-safe). Não usar `VARCHAR` — risco de perda de caracteres acentuados/multibyte.
+- JSON: `NVARCHAR(MAX)` + funções nativas `ISJSON`, `JSON_VALUE`, `JSON_QUERY` (SQL Server 2016+). Não usar `JSON` tipo (só SQL Server 2025+).
+- Erros: `errors.Is(err, sql.ErrNoRows)` — nunca `pgx.ErrNoRows`.
+
+### 9.4 Tipos PG → T-SQL (referência rápida pra portar legacy)
+
+| PostgreSQL | SQL Server T-SQL |
+|---|---|
+| `BIGSERIAL` PK | `BIGINT IDENTITY(1,1) PRIMARY KEY` |
+| `BIGINT` FK | `BIGINT` (idem) |
+| `BOOLEAN` | `BIT` |
+| `VARCHAR(n)` / `TEXT` | `NVARCHAR(n)` / `NVARCHAR(MAX)` |
+| `TIMESTAMPTZ` | `DATETIMEOFFSET` |
+| `NUMERIC(p,s)` | `DECIMAL(p,s)` |
+| `JSONB` | `NVARCHAR(MAX)` + ISJSON CHECK |
+| `TEXT[]` | tabela auxiliar `entidade_field` 1:N (preferido) ou `NVARCHAR(MAX)` com delim |
+| `NOW()` / `CURRENT_TIMESTAMP` | `SYSUTCDATETIME()` |
+| `INSERT ... RETURNING id` | `INSERT ... OUTPUT INSERTED.id ... VALUES (...)` |
+| `INSERT ... ON CONFLICT DO NOTHING` | `IF NOT EXISTS (SELECT 1 ...) INSERT ...` ou `MERGE` |
+| `UPDATE ... FROM cte` | `UPDATE alias SET ... FROM cte alias WHERE ...` |
+| `WHERE x IS NULL` (filtered index) | idem — sintaxe compatível em SQL Server 2008+ |
+| `RAISE NOTICE 'msg'` | `PRINT 'msg'` ou `RAISERROR('msg',0,1) WITH NOWAIT` |
+| `pgx.ErrNoRows` | `sql.ErrNoRows` |
+| `$1, $2` | `@p1, @p2` |
 
 ---
 
@@ -485,8 +517,11 @@ Cada ADR consolidando o que SPEC.md decide, com seção "Options considered" e "
 
 ### 10.1 Carregamento
 - Configurações **estruturais** (apps, models, tiers, timeouts): `configs/gateway.yaml`.
-- **Segredos** (API keys, DB passwords): variáveis de ambiente, **referenciadas** no YAML como `${VAR_NAME}`.
-- Expansão de variáveis: `os.ExpandEnv` ou regex equivalente, no momento do load.
+- **Segredos** (API keys, DB passwords, etc.): duas fontes, expandidas no boot:
+  - Variáveis de ambiente, referenciadas no YAML como `${VAR_NAME}` (mecânica original)
+  - Azure Key Vault, referenciadas como `${kv:NOME-DO-SECRET}` (ADR-0018, Onda 3)
+- A senha do banco SQL Server (`AzureAIGateway-DB-Password-hom` no vault `danieldev`) usa `${kv:...}` — nunca `.env` em claro (ADR-0022).
+- Ordem de expansão: `${kv:...}` é resolvido **antes** de `${VAR_NAME}` para preservar o token KV durante a expansão de env vars (ver fix `expandEnvPreservingKV`).
 
 ### 10.2 Validação
 - Toda config tem `Validate() error` que falha rápido no boot:
@@ -521,12 +556,16 @@ Estas URLs são fontes de verdade. Em caso de dúvida sobre API, consultar **ant
 ### Libs Go
 - https://github.com/go-chi/chi (router)
 - https://pkg.go.dev/github.com/go-chi/chi/v5
-- https://pkg.go.dev/github.com/jackc/pgx/v5
-- https://github.com/jackc/pgx/wiki
+- https://github.com/microsoft/go-mssqldb (SQL Server driver)
+- https://pkg.go.dev/database/sql (stdlib usada pelo driver acima)
 - https://github.com/golang-migrate/migrate/blob/master/MIGRATIONS.md
+- https://github.com/golang-migrate/migrate/tree/master/database/sqlserver
 - https://pkg.go.dev/golang.org/x/time/rate
 - https://pkg.go.dev/gopkg.in/yaml.v3
 - https://pkg.go.dev/log/slog
+- https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/azidentity
+- https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets
+- https://pkg.go.dev/golang.org/x/crypto/bcrypt
 
 ### Azure OpenAI
 - https://learn.microsoft.com/en-us/azure/ai-services/openai/reference
@@ -542,8 +581,16 @@ Estas URLs são fontes de verdade. Em caso de dúvida sobre API, consultar **ant
 - https://platform.openai.com/docs/api-reference/chat
 - https://platform.openai.com/docs/api-reference/streaming
 
-### PostgreSQL
+### SQL Server (banco operacional — ADR-0022)
+- https://learn.microsoft.com/en-us/sql/t-sql/data-types/data-types-transact-sql
+- https://learn.microsoft.com/en-us/sql/relational-databases/json/json-data-sql-server
+- https://learn.microsoft.com/en-us/sql/t-sql/queries/select-transact-sql
+- https://learn.microsoft.com/en-us/sql/t-sql/queries/output-clause-transact-sql
+- https://learn.microsoft.com/en-us/sql/t-sql/statements/merge-transact-sql
+
+### PostgreSQL (legacy — referência histórica Phase 1)
 - https://www.postgresql.org/docs/17/
+- Útil apenas para entender as migrations em `migrations/postgres-legacy/`
 
 ### Docker
 - https://docs.docker.com/engine/reference/builder/
@@ -557,7 +604,9 @@ Estas URLs são fontes de verdade. Em caso de dúvida sobre API, consultar **ant
 | `_ = err` ou `_, _ := func()` | Tratar erro: wrappar e propagar |
 | Logger global (`log.Println`) | Injetar `*slog.Logger` |
 | `panic("..." )` em runtime | Retornar erro |
-| String concat em SQL | Parâmetros `$1, $2` |
+| String concat em SQL | Parâmetros `@p1, @p2` |
+| Tabela sem schema qualificado | Sempre `gogateway.tabela` |
+| `pgx.ErrNoRows` em comparação | `errors.Is(err, sql.ErrNoRows)` |
 | `time.Sleep` em produção | `select` com `ctx.Done()` + `time.After` |
 | `bytes.Equal` em hashes | `subtle.ConstantTimeCompare` |
 | `latest` em Docker | Versão pinada |
