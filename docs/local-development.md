@@ -130,6 +130,13 @@ Se você está usando os IDEs JetBrains, esse é o caminho mais limpo: o `.env` 
 
 ### 3.2 GoLand — admin-create
 
+> **Nota (ADR-0022 / migration 010):** ambientes novos **não precisam** mais
+> rodar `admin-create` — a migration 010 provisiona o user `root` (senha
+> temporária `Adm!nGogateway2026`) na primeira aplicação do schema. Logue no
+> Console, troque a senha (ou desative `root` após criar seu admin pessoal),
+> e está pronto. O `admin-create` continua útil pra criar admins **adicionais**
+> em scripts/CI sem passar pela UI.
+
 Mesma receita, mudando:
 
 - **Name**: `admin-create`

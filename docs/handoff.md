@@ -93,17 +93,27 @@ A linha `NOTICE: migration 009 ...` vem do `RAISERROR(...) WITH NOWAIT` em PL/T-
 
 Em qualquer falha, **não tentar mexer no código** — anotar o sintoma + me avisar.
 
-### Passo 4 — Criar admin inicial e validar UI
+### Passo 4 — Logar no Console com o admin "root" provisionado pela migration 010
 
-Depois que o gateway estiver bootando limpo, **antes** de testar requests:
+A partir da troca SQL Server, **não precisa mais rodar `cmd/admin-create` em
+ambiente virgem** — a migration 010 já provisiona o user `root` com senha
+temporária bootstrap. Acessa `http://localhost:8080/ui`:
 
-```pwsh
-$env:DATABASE_URL = "sqlserver://usr_sist_AzureAI_Gateway_hom:$(az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom --query value -o tsv)@BRSPVPDEV003:1433?database=AzureAI_Gateway_hom&encrypt=true&trustServerCertificate=true"
-go run ./cmd/admin-create -username admin -role admin
-# Senha: ... (digita interativamente)
+```
+Username: root
+Senha:    Adm!nGogateway2026
 ```
 
-Acessa `http://localhost:8080/ui` → login admin → confirma que aba Aplicações está vazia (banco novo).
+**Imediatamente após login:**
+1. Cria seu próprio admin pessoal pela UI (role=admin) — atribui seu nome
+2. Sai e re-loga com seu admin pessoal
+3. Trocar a senha do `root` pela UI **OU** desativar o `root` (Active=false)
+
+Quando o SSO Entra ID/SAML for implementado (sem ETA — ver `roadmap.md` §3.3),
+o `root` local será removido permanentemente via migration de cleanup.
+
+O `cmd/admin-create` continua disponível pra criar admins adicionais via CLI,
+mas o caminho normal agora é pela UI.
 
 ### Passo 5 — Criar 1 aplicação + 1 endpoint + smoke do proxy
 
@@ -163,6 +173,33 @@ Registrado em `roadmap.md` §3.1 (P2). Propagar `*LatencyTrace` via `r.Context()
 
 ### 4.5 Cache de prompts (semantic) — roadmap.md §4.3
 P3, sem urgência.
+
+### 4.6 Modo híbrido para migrations (auto-apply vs manual)
+**Discutido em 2026-05-27.** Hoje o gateway roda `migrate.Up()` no boot
+(modo auto-apply). Bom pra dev/homolog, mas em prod corporativo o DBA quer
+controlar quando DDL roda (janela de mudança, peer review).
+
+**Proposta:** flag `migrations_auto_apply` (config + env `MIGRATIONS_AUTO_APPLY`).
+- `true` (default): comportamento atual (`m.Up()` no boot).
+- `false`: gateway só verifica que `schema_migrations.version` é igual à
+  `latestKnownVersion` hardcoded no binário. Se diferente, falha o boot com
+  mensagem clara ("schema version is N, expected M — DBA must apply
+  migrations"). DBA aplica via `migrate -database ... -path migrations up` em
+  janela controlada.
+
+**Tempo estimado:** 30-60 min. ~20 LOC em `internal/db/migrate.go` + 1 campo
+em `internal/config/config.go` + atualização do `production-deploy.md` e do
+`maintenance.md`.
+
+**Por que isso e não "deixar tudo dinâmico":** auto-recuperação só vale
+quando o problema é trivial e não mascara bug real (exemplos válidos: 007
+descobrir nome de constraint, 009 quarentenar duplicatas, 005 deferred
+name resolution via EXEC). Pra controle de schema em prod, previsibilidade
+> mágica — o DBA precisa **ver** a migration antes de rodar.
+
+**Quando virar prioridade:** quando for empacotar o gateway para deploy
+corporativo real (não só homolog dev). Hoje fica como P2 / Eixo Segurança
+no roadmap, mas sem urgência.
 
 ---
 

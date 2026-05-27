@@ -118,6 +118,13 @@ Tudo abaixo escreve em `audit_events` (ou tabela paralela).
 - **P2 — IP allowlist por aplicação**. Tabela `application_ip_allowlist`. Auth middleware rejeita com 403 se IP origem não está na lista (vazia = permite tudo).
 - **P3 — mTLS upstream opcional**. Target ganha campo `client_cert_pem` cifrado (KV). Transport per-target em vez do shared.
 - **P3 — 2FA TOTP pra admins**. Lote D do console-roadmap.
+- **P2 — SSO via Azure Entra ID (SAML)**. Substitui o login local com bcrypt
+  (ADR-0011) por federação OAuth2/SAML contra o Entra ID corporativo.
+  Quando aprovado, remove a migration 010 (admin `root` bootstrap) e
+  desativa users locais. Sem ETA — anotado em 2026-05-27 pelo owner como
+  "fica pro final apenas". Acoplado: revogar acessos quando funcionário sai
+  vira automático via grupo Entra ID. Quando virar prioridade, abrir ADR
+  específico.
 - **P3 — Secret rotation automation**. Gateway sabe rotacionar Azure key sem deploy quando KV detecta versão nova.
 
 ### 3.4 Requisitos
