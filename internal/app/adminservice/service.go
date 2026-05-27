@@ -46,7 +46,16 @@ const (
 
 	// keyPrefixMaxLen is the maximum number of alphanumeric characters taken from the
 	// app name to form the API key prefix (after the "gwk_" literal).
-	keyPrefixMaxLen = 10
+	//
+	// Reasoning: 10 chars was too tight — application names sharing the first ~10 ASCII
+	// letters (e.g. "Aplicacao Tier 1" / "Aplicacao Tier 3" both collapse to
+	// "gwk_aplicacaot") collided in api_keys.key_prefix. Because the column lacked a
+	// UNIQUE constraint, GetAPIKeyByPrefix returned a non-deterministic row when two
+	// active keys shared a prefix, surfacing as intermittent "token mismatch" 401s.
+	// 24 chars accommodates realistic app names (the applications.name column itself
+	// is VARCHAR(64)). Defense in depth: migration 009 adds a partial UNIQUE index on
+	// key_prefix so any residual collision fails fast at INSERT instead of silently.
+	keyPrefixMaxLen = 24
 )
 
 // ErrInvalidCredentials is returned by Login when the username does not exist or the
@@ -513,18 +522,36 @@ func (s *Service) ListEndpointGrants(ctx context.Context, applicationID int64) (
 }
 
 // GrantAccess allows an application to call a proxy endpoint.
+//
+// Emits an info log so the operator can confirm persistence without entering
+// the database. Useful while investigating UI reports of "access does not save"
+// (the log line proving the INSERT executed pairs with the 204 the handler returns).
 func (s *Service) GrantAccess(ctx context.Context, applicationID, endpointID int64) error {
 	if err := s.endpoints.Grant(ctx, applicationID, endpointID); err != nil {
 		return fmt.Errorf("granting access app id=%d endpoint id=%d: %w", applicationID, endpointID, err)
 	}
+	s.logger.Info("endpoint access granted",
+		"application_id", applicationID,
+		"endpoint_id", endpointID,
+		"event_type", "grant_created",
+	)
 	return nil
 }
 
 // RevokeAccess removes an application's access to a proxy endpoint.
+//
+// Emits an info log on success — pair with the GrantAccess log to validate that
+// toggle operations from the admin UI hit the database (see "Acessos não salva"
+// investigation in handoff.md / docs).
 func (s *Service) RevokeAccess(ctx context.Context, applicationID, endpointID int64) error {
 	if err := s.endpoints.Revoke(ctx, applicationID, endpointID); err != nil {
 		return fmt.Errorf("revoking access app id=%d endpoint id=%d: %w", applicationID, endpointID, err)
 	}
+	s.logger.Info("endpoint access revoked",
+		"application_id", applicationID,
+		"endpoint_id", endpointID,
+		"event_type", "grant_revoked",
+	)
 	return nil
 }
 

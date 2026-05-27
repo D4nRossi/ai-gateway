@@ -41,6 +41,18 @@ Arquivos novos:
 **Validação atual:** `go vet`, `go build`, `go test ./...` — 15 pacotes OK, zero
 falhas. Falta apenas validação ao vivo (Postgres + Azure real).
 
+**Re-validação fresh desta sessão:** `go vet ./...` silencioso, `go build ./...`
+silencioso, `go test -count=1 -race ./...` verde em 15 pacotes (sem cache, com
+detector de race). Nada drifou desde ontem.
+
+**Estratégia de validação ao vivo escolhida nesta sessão:** Caminho 1 — confiar
+no header `X-Gateway-Latency-Breakdown` como sinal primário (aparece em toda
+response, visível no painel "Headers" do Playground); usar SQL apenas uma vez
+no fim pra confirmar persistência no DB. Não entrar no Postgres no fluxo do
+dia a dia. Caminho 2 (propagar trace pelo contexto + log enriquecido no
+middleware) fica registrado em `roadmap.md` §3.1 como follow-up natural —
+faz a validação posterior independente do DB.
+
 ---
 
 ## 2. Próxima ação — em 4 passos

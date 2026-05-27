@@ -60,6 +60,9 @@ func humanUniqueViolation(pg *pgconn.PgError) string {
 		return "já existe um usuário com esse username"
 	case strings.Contains(name, "api_keys_application_id"):
 		return "essa aplicação já possui uma chave ativa"
+	case strings.Contains(name, "api_keys_active_prefix"):
+		return "o nome da aplicação produz um prefixo de chave (gwk_…) que colide " +
+			"com outra aplicação ativa — escolha um nome mais distinto nos primeiros caracteres"
 	case strings.Contains(name, "admin_sessions_token_hash"):
 		return "colisão de token de sessão — tente novamente"
 	default:

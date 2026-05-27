@@ -8,7 +8,8 @@ import (
 )
 
 // TestDeriveKeyPrefix verifies that the prefix derivation is ASCII-only,
-// truncates at keyPrefixMaxLen, and drops any byte outside [a-z0-9].
+// truncates at keyPrefixMaxLen (24 — see service.go const block for rationale),
+// and drops any byte outside [a-z0-9].
 //
 // References:
 //   - ADR-0009 — DB-backed admin plane, api_keys.key_prefix is the index
@@ -29,7 +30,7 @@ func TestDeriveKeyPrefix(t *testing.T) {
 		{
 			name:    "mixed case and punctuation",
 			appName: "My-Service-v2",
-			want:    "gwk_myservicev",
+			want:    "gwk_myservicev2",
 		},
 		{
 			name:    "Unicode letters (ç, ã) are dropped",
@@ -37,9 +38,9 @@ func TestDeriveKeyPrefix(t *testing.T) {
 			want:    "gwk_aplicao",
 		},
 		{
-			name:    "Unicode + space, truncated at limit (10 chars)",
+			name:    "Unicode + space within limit",
 			appName: "Aplicação Demo",
-			want:    "gwk_aplicaodem",
+			want:    "gwk_aplicaodemo",
 		},
 		{
 			name:    "all non-ASCII letters yields bare prefix",
@@ -53,8 +54,8 @@ func TestDeriveKeyPrefix(t *testing.T) {
 		},
 		{
 			name:    "name longer than limit is truncated",
-			appName: "verylongapplicationname",
-			want:    "gwk_verylongap",
+			appName: "thisisaverylongapplicationnameindeed",
+			want:    "gwk_thisisaverylongapplicati",
 		},
 		{
 			name:    "empty name returns bare prefix",
