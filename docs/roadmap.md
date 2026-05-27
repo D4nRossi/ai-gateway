@@ -35,7 +35,7 @@ Tudo abaixo está em produção no branch `v2`.
 | Provider Mock | Resposta determinística pra dev |
 | Budget pre-check + counter (async) | UPSERT via canal |
 | Usage / Audit events (async) | Worker em background |
-| PostgreSQL (pgx) + migrations idempotentes | 7 migrations aplicadas no boot |
+| SQL Server (microsoft/go-mssqldb) + migrations T-SQL idempotentes | 9 migrations aplicadas no boot, schema dedicado `gogateway` (ADR-0022) |
 | Streaming SSE | `WriteTimeout=0` (ADR-0008), `stream_cancelled` audit |
 
 ### v2 — Admin plane + Proxy plane
@@ -61,7 +61,7 @@ Tudo abaixo está em produção no branch `v2`.
 
 | Bug | Fix |
 |---|---|
-| Token UTF-8 quebrava Postgres SQLSTATE 22021 | Onda 1: `ExtractPrefix` + `deriveKeyPrefix` ASCII-only |
+| Token UTF-8 quebrava Postgres SQLSTATE 22021 (legacy) | Onda 1: `ExtractPrefix` + `deriveKeyPrefix` ASCII-only (mantém-se válido em SQL Server pra cobrir NVARCHAR header roundtrip) |
 | `${kv:NAME}` consumido por `os.ExpandEnv` antes do resolver KV | Hotfix Onda 3: `expandEnvPreservingKV` |
 | `api_keys.application_id UNIQUE` bloqueia rotate | Migration 007: UNIQUE parcial `WHERE rotated_at IS NULL` |
 | `TestValidate_ValidConfig` faltava `EncryptionKeyHex` | Fixture atualizada |
@@ -114,7 +114,7 @@ Tudo abaixo escreve em `audit_events` (ou tabela paralela).
 ### 3.3 Segurança
 
 - **P1 — Onda 4.5 — Target credentials no Key Vault**. Resolve a quebra de targets quando `DB_ENCRYPTION_KEY` rotaciona (você viveu isso). Schema: nova coluna `proxy_targets.kv_secret_name TEXT NULL`. Quando preenchida, gateway lê credencial do KV em vez de decifrar AES local. Coexiste com modo legacy via fallback. Migração: CLI `cmd/migrate-targets-to-kv` move targets existentes em batch. Vira **ADR-0020**.
-- **P2 — Validação sistemática de inputs**. Auditoria dos handlers admin (`internal/api/admin/handlers/`): comprimento máximo, sanitização de slug, validação de URL de target, validação de hex, defesa contra SQL injection (pgx parameter mode já cobre — confirmar 100%).
+- **P2 — Validação sistemática de inputs**. Auditoria dos handlers admin (`internal/api/admin/handlers/`): comprimento máximo, sanitização de slug, validação de URL de target, validação de hex, defesa contra SQL injection (`database/sql` + `microsoft/go-mssqldb` parameter mode `@p1, @p2, ...` já cobre — confirmar 100%).
 - **P2 — IP allowlist por aplicação**. Tabela `application_ip_allowlist`. Auth middleware rejeita com 403 se IP origem não está na lista (vazia = permite tudo).
 - **P3 — mTLS upstream opcional**. Target ganha campo `client_cert_pem` cifrado (KV). Transport per-target em vez do shared.
 - **P3 — 2FA TOTP pra admins**. Lote D do console-roadmap.
@@ -167,7 +167,7 @@ Multi-instance + altíssima carga.
 
 - **P1 — Redis rate limiter**. Substitui `golang.org/x/time/rate` in-memory. Interface `ratelimit.Limiter` já existe; basta nova impl. Permite múltiplas réplicas do gateway sem que cada uma tenha seu próprio bucket.
 - **P1 — Redis budget cache**. Pre-check de budget hoje faz query SQL por request. Em alta carga, cria pressão no DB. Cache com TTL 60s elimina.
-- **P2 — Particionamento mensal** de `usage_events` e `audit_events`. Postgres declarative partitioning por `created_at`. Queries em janelas curtas (dashboard 24h) ficam triviais; cleanup é DROP de partição.
+- **P2 — Particionamento mensal** de `gogateway.usage_events` e `gogateway.audit_events`. SQL Server table partitioning por `created_at` (partition function + scheme). Queries em janelas curtas (dashboard 24h) ficam triviais; cleanup é SWITCH partition + drop staging.
 - **P2 — Stateless garantido**. Auditar que nenhum estado fica só no processo além de cache LRU local (que é OK perder em restart). Pré-requisito pra autoscaling.
 - **P2 — DB read replicas + pool tuning**. Connection pool por replica, leitura em replica pra queries de dashboard.
 - **P3 — Semantic cache de respostas** (semantic = hash exato do payload, não embedding). Redis com chave = SHA256(model + messages + temperature + max_tokens + ...). TTL configurável. Cache hit: response em <10ms, custo Azure zero. Trade-offs: invalidação por mudança de versão de modelo (rare), risco de resposta "velha" (mitigado por TTL curto), custo de manutenção do cluster Redis.
@@ -219,7 +219,7 @@ Itens não funcionais. Não bloqueiam features, mas reduzem dívida.
 
 - [ ] `go test -coverprofile`, meta > 80% nos pacotes com lógica de negócio
 - [ ] CI/CD GitHub Actions (lint + test + build + push ACR)
-- [ ] `testcontainers-go` pra testes contra Postgres real
+- [ ] `testcontainers-go` pra testes contra SQL Server real (`mcr.microsoft.com/mssql/server`)
 - [ ] Testes de contrato SSE (chunks vs schema OpenAI)
 - [ ] Load test (`k6` ou `vegeta`) com Azure real
 - [ ] Lint customizado bloqueando `unicode.IsLetter`/`IsDigit` em contexto que escreve em coluna `text` (regressão da Onda 1)
@@ -239,6 +239,15 @@ Ondas entregues indexadas pelos ADRs que decidiram cada uma.
 | 4 | Azure AI Language PII | ADR-0019 | ✅ |
 | 5 | UI: form Azure + playground canônico + catálogo + alert/dialog | (sem ADR — UI) | ✅ |
 | 6 | Latency breakdown observável | ADR-0021 | ✅ código; ⏳ validação |
+| 7 | Troca emergencial PostgreSQL → SQL Server (schema gogateway) | ADR-0022 | ✅ código; ⏳ smoke test contra BRSPVPDEV003 |
 | 4.5 | Target credentials no Key Vault | ADR-0020 a fazer | ⏳ planejada |
 
-ADRs livres a partir de **0022**.
+**Notas sobre a Onda 7 (troca de banco)**:
+- Trigger: requisito de infra corporativa em homologação (SQL Server gerenciado pela TI, sem espaço pra Postgres alternativo).
+- Escala: ~30 arquivos tocados (driver, pool, migrate, 4 repos, 4 writers, 1 handler, 2 routers, 2 cmd, config, gateway.yaml, CLAUDE.md, ADR-0022, todas as migrations T-SQL).
+- Migrations PG legacy preservadas em `migrations/postgres-legacy/` (referência histórica, não rodam).
+- Schema dedicado `gogateway` qualificado em toda query (defesa em profundidade — o banco corporativo é compartilhado).
+- Senha do user de serviço vive exclusivamente no Key Vault (`AzureAIGateway-DB-Password-hom`).
+- Suite verde (vet/build/test-race) ao fim do código; smoke test ao vivo é o último passo pra fechar a Onda.
+
+ADRs livres a partir de **0023**.

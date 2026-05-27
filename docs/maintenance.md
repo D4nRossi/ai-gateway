@@ -80,29 +80,44 @@ A rotação exige trocar o `key_hash` no YAML e reiniciar. Para minimizar downti
 
 ## Gerenciar migrations
 
+> **ADR-0022:** o gateway agora opera em SQL Server (schema `gogateway`).
+> Os comandos abaixo refletem o setup atual; o histórico Postgres está
+> preservado em `migrations/postgres-legacy/` apenas como referência (não
+> executável). A tabela `schema_migrations` continua sendo a fonte de verdade
+> do `golang-migrate` — fica em `dbo` (schema default do user), não em
+> `gogateway`.
+
 ### Ver migrations aplicadas
 
-```bash
-docker exec -it $(docker compose ps -q postgres) psql -U gateway -d gateway \
-  -c "SELECT version, dirty, applied_at FROM schema_migrations ORDER BY version;"
+Via tab Database do GoLand (conexão SQL Server) ou `sqlcmd`:
+
+```sql
+SELECT version, dirty FROM dbo.schema_migrations;
 ```
 
 ### Aplicar migrations manualmente
 
-Se precisar rodar migrations fora do boot do gateway (ex: manutenção):
+Se precisar rodar migrations fora do boot do gateway (ex.: manutenção):
 
-```bash
-# Instalar ferramenta migrate
-go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+```pwsh
+# Instalar ferramenta migrate com tag do driver sqlserver
+go install -tags 'sqlserver' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+
+# Montar a connection URL (senha vem do KV, nunca em texto)
+$pw  = az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom --query value -o tsv
+$url = "sqlserver://usr_sist_AzureAI_Gateway_hom:${pw}@BRSPVPDEV003:1433?database=AzureAI_Gateway_hom&encrypt=true&trustServerCertificate=true"
 
 # Aplicar todas as pendentes
-migrate -database "$DATABASE_URL" -path migrations up
+migrate -database "$url" -path migrations up
 
 # Reverter 1 passo
-migrate -database "$DATABASE_URL" -path migrations down 1
+migrate -database "$url" -path migrations down 1
 
 # Ver versão atual
-migrate -database "$DATABASE_URL" -path migrations version
+migrate -database "$url" -path migrations version
+
+# Limpar dirty state (uso emergencial, depois de migration parcial)
+migrate -database "$url" -path migrations force <N>   # N = última versão consistente
 ```
 
 ### Criar uma nova migration

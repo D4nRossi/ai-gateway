@@ -1,8 +1,18 @@
 # SPEC.md — AI Gateway Specification
 
-> **Status**: Phase 1 (Demo). This document is the authoritative specification for the AI Gateway project.
+> **Status**: Phase 1 (Demo) baseline. This document is the authoritative specification for the AI Gateway project.
 > Any divergence from this document **requires an ADR** (see CLAUDE.md, section 7).
 > Any ambiguity must be raised with the human before implementation.
+>
+> **Outstanding divergences not yet folded into this SPEC** (consult the listed ADRs for current state):
+> - ADR-0009 — DB-backed admin plane (`applications`, `api_keys` live in DB, not YAML)
+> - ADR-0010, ADR-0013, ADR-0016, ADR-0017 — generic proxy plane `/v1/proxy/{slug}/*`
+> - ADR-0011 — admin auth via opaque session tokens (bcrypt)
+> - ADR-0014 — embedded React/Vite admin SPA at `/ui`
+> - ADR-0018 — Azure Key Vault as secret provider (`${kv:NAME}`)
+> - ADR-0019 — Azure AI Language PII (Tier 2 fail-open, Tier 3 fail-closed)
+> - ADR-0021 — Latency breakdown observable (5 buckets, header `X-Gateway-Latency-Breakdown`)
+> - **ADR-0022 — PostgreSQL → SQL Server migration, schema `gogateway`** (drives all references to "Postgres" in this doc — read those as "SQL Server" until the SPEC is fully re-synced)
 
 > **Language note**: technical spec in English (interface contracts, code, schema). Reasoning narrative may be Portuguese.
 
@@ -53,7 +63,7 @@ Consumer App
 │     • Tier 1: local masking (light)    │
 │     • Tier 2: + injection heuristics   │
 │     • Tier 3: + Azure Content Safety   │
-│  7. Budget pre-check (Postgres)        │
+│  7. Budget pre-check (SQL Server)      │   ← ADR-0022
 │  8. Provider call (Azure or Mock)      │
 │  9. Streaming or non-streaming         │
 │ 10. Post-validation (Tier 3 only)      │
@@ -67,10 +77,13 @@ Consumer App
 Azure OpenAI (Foundry)         │
                                │
               ┌────────────────┴─────────┐
-              │ PostgreSQL               │
+              │ SQL Server (ADR-0022)    │
+              │ schema: gogateway        │
               │  • usage_events          │
               │  • audit_events          │
               │  • budget_counters       │
+              │  • applications, api_keys│
+              │  • proxy_endpoints, …    │
               └──────────────────────────┘
 ```
 
@@ -119,7 +132,7 @@ ai-gateway/
 │   │   ├── config.go              # struct + YAML load + env expand + Validate()
 │   │   └── doc.go
 │   ├── db/
-│   │   ├── pool.go                # pgxpool setup
+│   │   ├── pool.go                # *sql.DB + microsoft/go-mssqldb setup (ADR-0022)
 │   │   └── migrate.go             # runs golang-migrate on boot
 │   ├── observability/
 │   │   └── logger.go              # slog factory + context keys
@@ -193,7 +206,16 @@ azure_content_safety:                   # OPTIONAL; if absent, Tier 3 falls back
   content_safety_timeout_ms: 1500
 
 database:
-  url: ${DATABASE_URL}
+  # ADR-0022 — structured SQL Server config (replaces single URL string).
+  driver: sqlserver
+  host: ${DB_HOST}                          # e.g. BRSPVPDEV003
+  port: 1433
+  database: ${DB_NAME}                      # e.g. AzureAI_Gateway_hom
+  user: ${DB_USER}                          # e.g. usr_sist_AzureAI_Gateway_hom
+  password: ${kv:AzureAIGateway-DB-Password-hom}   # ADR-0018 — KV only
+  schema: gogateway                         # dedicated schema, qualified in all queries
+  encrypt: true
+  trust_server_certificate: false           # true only for self-signed homologation certs
   max_conns: 20
   min_conns: 2
 
@@ -554,7 +576,13 @@ Azure returns OpenAI-compatible JSON. The gateway **passes it back to the consum
 
 ---
 
-## 8. PostgreSQL schema (initial migration)
+## 8. Database schema (initial migration — SQL Server, ADR-0022)
+
+> **Note**: Section content below is the **historical PostgreSQL schema** preserved
+> as documentation reference. The current authoritative schema is in T-SQL under
+> `migrations/00*.up.sql` (qualified with `gogateway.*`). The legacy PG migrations
+> are preserved under `migrations/postgres-legacy/`. Tipo mappings PG → T-SQL
+> are documented in `CLAUDE.md` §9.4.
 
 ### 8.1 `migrations/001_init.up.sql`
 
@@ -915,7 +943,7 @@ Streaming required `WriteTimeout: 0`; this is the known trade-off. See **ADR-000
 1.  Parse env / flags (config file path).
 2.  Load YAML config → ExpandEnv → Unmarshal → Validate(). On error: log + exit 1.
 3.  Initialize slog logger (level, format from config).
-4.  Initialize Postgres pool. On error: exit 1.
+4.  Initialize SQL Server connection (`db.NewMSSQL(ctx, cfg.Database)`). On error: exit 1.
 5.  Run migrations. On error: exit 1.
 6.  Build PolicyStore from config.applications.
 7.  Build model catalog from config.models.
@@ -982,7 +1010,8 @@ Plan items deliberately deferred (each will get its own ADR when initiated):
 | Azure Prompt Shield | https://learn.microsoft.com/en-us/azure/ai-services/content-safety/quickstart-prompt-shield |
 | Azure Content Safety (text) | https://learn.microsoft.com/en-us/azure/ai-services/content-safety/quickstart-text |
 | chi router | https://github.com/go-chi/chi |
-| pgx | https://github.com/jackc/pgx |
+| microsoft/go-mssqldb (ADR-0022) | https://github.com/microsoft/go-mssqldb |
+| pgx (legacy — Phase 1 reference) | https://github.com/jackc/pgx |
 | golang-migrate | https://github.com/golang-migrate/migrate |
 | slog | https://pkg.go.dev/log/slog |
 | Luhn algorithm | https://en.wikipedia.org/wiki/Luhn_algorithm |

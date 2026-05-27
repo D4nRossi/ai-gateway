@@ -1,7 +1,7 @@
 # Handoff — retomada da sessão
 
 > **Quando ler:** ao abrir o projeto amanhã. Esse documento é "como continuar
-> sem perder contexto". Tem 5 seções; siga em ordem.
+> sem perder contexto". Siga em ordem das seções.
 >
 > **Quando editar:** ao final de cada sessão de trabalho, sobrescreva com o
 > novo estado. Não acumular versões — esse arquivo é de **uso atual**, não
@@ -11,315 +11,177 @@
 
 ## 1. Estado em que paramos
 
-**Data:** sessão fechada na noite anterior.
-**Último commit aplicado:** `399935c fix: rotação de chave + catálogo de exemplos no playground`
+**Data:** sessão fechada em 2026-05-27 (noite). Cinco frentes encadeadas:
+Onda 6 → fix Bug 1 (token mismatch) → ADR-0022 proposed → atualização do
+CLAUDE.md → troca PostgreSQL → SQL Server completa em código.
 
-### O que está commitado (e validado em runtime)
+**Último commit aplicado:** `bee7c6f feat: troca PostgreSQL → SQL Server (ADR-0022, schema gogateway)`
 
-- ✅ Ondas 1–5 inteiras (ASCII tokens, path translation, KeyVault, Azure Language PII, UI completa)
-- ✅ Bugfix da rotação de Application Key (migration 007)
-- ✅ Catálogo de exemplos no Playground (Onda 5F)
+### O que está commitado (e validado em build/test)
 
-### O que está pendente de commit (mas pronto e testado em build)
+| Commit | Conteúdo |
+|---|---|
+| `d79d05d` | Onda 6 — latency breakdown observável (ADR-0021) |
+| `f4b5e6e` | Fix Bug 1 — colisão de key_prefix em apps com nome similar (migration 009) |
+| `dd21169` | ADR-0022 + edits do working tree pré-SQL ("pre sql") |
+| `85e6b97` | docs(claude) — CLAUDE.md alinhado com ADR-0022 (T-SQL, deps) |
+| `bee7c6f` | Troca PostgreSQL → SQL Server completa: driver, migrations T-SQL, repos `internal/infra/mssql`, writers, config, main.go, admin-create |
 
-**Onda 6 — Latency Breakdown Observável (ADR-0021)**.
+**Suite 100% verde:** `go vet ./...`, `go build ./...`, `go test -count=1 -race ./...` — 15 pacotes, sem race detector flags.
 
-Arquivos modificados:
-- `docs/how-it-works.md` — nova seção "Latência observável por bucket"
-- `docs/roadmap.md` — reorganização inteira em 7 eixos + Onda 6 anotada
-- `internal/api/handlers/chat.go` — instrumentação dos 5 buckets + header
-- `internal/usage/event.go` — 5 campos `Lat*Ms` em `UsageEvent`
-- `internal/usage/writer.go` — `insertSQL` ampliado pra 17 colunas
+### O que NÃO foi validado ainda (próximo passo crítico)
 
-Arquivos novos:
-- `docs/adrs/0021-latency-breakdown-observavel.md` — ADR completa
-- `docs/handoff.md` — este documento
-- `internal/observability/trace.go` — `LatencyTrace` (Start/Mark/Bucket/Header)
-- `internal/observability/trace_test.go` — 7 cases (incl. concurrency)
-- `migrations/008_usage_events_latency_breakdown.{up,down}.sql`
-
-**Validação atual:** `go vet`, `go build`, `go test ./...` — 15 pacotes OK, zero
-falhas. Falta apenas validação ao vivo (Postgres + Azure real).
-
-**Re-validação fresh desta sessão:** `go vet ./...` silencioso, `go build ./...`
-silencioso, `go test -count=1 -race ./...` verde em 15 pacotes (sem cache, com
-detector de race). Nada drifou desde ontem.
-
-**Estratégia de validação ao vivo escolhida nesta sessão:** Caminho 1 — confiar
-no header `X-Gateway-Latency-Breakdown` como sinal primário (aparece em toda
-response, visível no painel "Headers" do Playground); usar SQL apenas uma vez
-no fim pra confirmar persistência no DB. Não entrar no Postgres no fluxo do
-dia a dia. Caminho 2 (propagar trace pelo contexto + log enriquecido no
-middleware) fica registrado em `roadmap.md` §3.1 como follow-up natural —
-faz a validação posterior independente do DB.
+- **Smoke test ao vivo contra o SQL Server real** (BRSPVPDEV003 / AzureAI_Gateway_hom). Tudo o que está commitado passa em build/test mas nunca rodou contra o banco corporativo.
+- Validação ao vivo da Onda 6 (Caminho 1: header `X-Gateway-Latency-Breakdown` + 1 query SQL). Foi interrompida pela troca emergencial — retomar **depois** que o SQL Server estiver bootando limpo.
+- Bug 2 — Acessos não persiste (logs instrumentados no commit `f4b5e6e`; aguarda repro com DevTools Network).
 
 ---
 
-## 2. Próxima ação — em 4 passos
+## 2. Próxima ação — smoke test SQL Server, em 5 passos
 
-### Passo 1 — Confirma que nada foi perdido
+### Pré-requisitos do ambiente
+
+| Item | Validar antes de prosseguir |
+|---|---|
+| `az login` no tenant `c050c98c-b463-4591-ac3b-deb782c0ba6e` | `az account show --query tenantId` |
+| Secret no KV: `AzureAIGateway-DB-Password-hom` | `az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom --query "{name:name,enabled:attributes.enabled}"` |
+| Acesso de rede ao SQL Server `BRSPVPDEV003:1433` (VPN ou rede corp) | `Test-NetConnection BRSPVPDEV003 -Port 1433` |
+| User `usr_sist_AzureAI_Gateway_hom` com permissão de **CREATE SCHEMA** OU schema `gogateway` já criado pelo DBA | conferir com o time de banco |
+| User `usr_sist_AzureAI_Gateway_hom` com permissão de **CREATE TABLE** em `dbo` (pra `schema_migrations` do golang-migrate) E em `gogateway` (pras tabelas operacionais) | conferir com DBA |
+
+Se algum desses falhar, **pare e resolva antes de bootar o gateway** — caso contrário a migration 001 vai falhar e o `schema_migrations` fica dirty.
+
+### Passo 1 — Confirma estado git limpo
 
 ```pwsh
 cd "E:/Teleperformance CRM SA/Arquitetura/Fontes/GoGateway/ai-gateway"
 git status --short
+git log --oneline -5
 ```
 
-Deve listar exatamente os mesmos arquivos da seção 1 acima (com possível
-`.idea/workspace.xml` extra do GoLand — ignorável). Se houver coisa
-inesperada, **pare e revise antes de prosseguir**.
+Esperado: working tree limpo (exceto `.idea/workspace.xml` ignorável), HEAD em `bee7c6f`.
 
-### Passo 2 — Commit da Onda 6
+### Passo 2 — Restart no GoLand
 
-Mensagem pronta (use HEREDOC, formato igual aos commits anteriores):
+Stop → Run na Run Config `gateway`. Olhe o log de boot procurando, **em ordem**:
 
 ```
-feat(observability): latency breakdown por bucket (ADR-0021)
-
-Instrumentação que decompõe a latência total de cada request em 5 buckets
-agregados (auth, mask, guardrails, provider, encode). Exposto via header
-de response E persistido em usage_events.
-
-Motivação
-Owner reportou latência alta (~2.6s pra gpt-4.1). Sem decomposição, qualquer
-afirmação sobre causa era chute. Agora dá pra defender com dado: "p50 de
-provider é 2400ms, mask é 180ms, gateway adiciona ~50ms" etc.
-
-Mecanismo
-- internal/observability/trace.go: LatencyTrace thread-safe com
-  Start/Mark/Bucket/Header. nil-safe pra permitir instrumentação
-  incremental. ~50ns por Mark; ~250ns total por request.
-- Buckets canônicos em LatencyBuckets: auth, mask, guardrails, provider,
-  encode. Ordem fixa pra header determinístico.
-
-Persistência
-- migrations/008: 5 colunas INTEGER NULL em usage_events. Sem backfill
-  — linhas antigas ficam NULL nas novas colunas; dashboards filtram
-  WHERE lat_provider_ms IS NOT NULL.
-- internal/usage/event.go: UsageEvent ganha 5 campos Lat*Ms.
-- internal/usage/writer.go: helper interno transforma todos-zero em
-  todos-NULL (callers legados que não instrumentam não dirty colunas
-  novas com falsos zeros).
-
-Header
-- X-Gateway-Latency-Breakdown sempre presente em response. ~80 bytes.
-- Formato "auth=2;mask=180;guardrails=0;provider=2400;encode=3".
-- No SSE, header sai antes do primeiro chunk — provider/encode aparecem
-  como 0 no header mas são persistidos corretamente em usage_events ao
-  final do stream.
-
-Instrumentação no handler
-- chat.go: Mark após decode+policy (auth), após Language (mask), após
-  Content Safety (guardrails), após provider call, após JSON encode.
-- Requests bloqueados cedo (injection_detected, model_not_allowed) NÃO
-  emitem usage_event — por design, só requests completas persistem
-  breakdown. Erros de provider (502/504) também não emitem.
-
-Tests
-- internal/observability/trace_test.go: 7 cases — nil-safe, single
-  mark, accumulação no mesmo bucket, format do header, bucket
-  inexistente, concorrência (-race), TotalMs.
-
-Docs
-- docs/adrs/0021-latency-breakdown-observavel.md: 4 opções comparadas
-  (log-only, granularidade fina, agregada chosen, OTel), schema do
-  trace, queries de exemplo.
-- docs/how-it-works.md: nova seção com tabela de buckets, queries SQL
-  p50/p95/p99, limitação no streaming.
-- docs/roadmap.md: reorganização inteira em 7 eixos estratégicos
-  (auditoria, desempenho, segurança, requisitos, dados, legalidade,
-  escalabilidade). Onda 6 anotada como entregue.
-- docs/handoff.md: novo. Documento de retomada de sessão.
-
-Suite 100% verde (15 pacotes). Migration roda no boot.
-```
-
-### Passo 3 — Restart do gateway
-
-No GoLand: Stop → Run na Run Configuration do gateway. Confirme no log:
-
-```json
+{"level":"INFO","msg":"ai gateway starting","config_path":"configs/gateway.yaml"}
+{"level":"INFO","msg":"sqlserver connected","host":"BRSPVPDEV003","database":"AzureAI_Gateway_hom","schema":"gogateway"}
+{"level":"INFO","msg":"applying migration","version":1}
+{"level":"INFO","msg":"applying migration","version":2}
+... (até version 9)
+NOTICE:  migration 009: no duplicate api_keys rows found, schema was already clean
 {"level":"INFO","msg":"migrations applied"}
+{"level":"INFO","msg":"admin api configured"}
+{"level":"INFO","msg":"generic proxy plane configured"}
+{"level":"INFO","msg":"server listening","addr":":8080"}
 ```
 
-A migration 008 vai rodar idempotente (adiciona 5 colunas null-able).
-Se houver erro de migration aqui, **abrir issue antes de continuar**.
+A linha `NOTICE: migration 009 ...` vem do `RAISERROR(...) WITH NOWAIT` em PL/T-SQL. No primeiro boot ela aparece com `no duplicate api_keys rows found, schema was already clean` (banco virgem).
 
-### Passo 4 — Validar em runtime (testes funcionais)
+### Passo 3 — Cenários de falha esperáveis (e como tratar)
 
-Faça **10-20 requests no Playground** com cenários variados:
+| Sintoma no log | Causa | Ação |
+|---|---|---|
+| `pinging sqlserver at BRSPVPDEV003:1433: dial tcp: ... no route to host` | VPN/firewall | Habilita VPN; testa `Test-NetConnection` |
+| `pinging sqlserver: login failed for user 'usr_sist_AzureAI_Gateway_hom'` | Senha errada no KV ou user sem permissão | Conferir secret no KV; conferir login com DBA |
+| `pinging sqlserver: TLS Handshake failed` | Cert do SQL Server inválido | Verificar `database.encrypt: true` + `database.trust_server_certificate: true` no YAML (homolog usa cert self-signed) |
+| `running migrations: ... CREATE SCHEMA permission denied in database 'AzureAI_Gateway_hom'` | User não tem CREATE SCHEMA | Pedir DBA pra criar schema gogateway manualmente |
+| `running migrations: ... cannot create object 'dbo.schema_migrations' permission denied` | User não tem CREATE TABLE em dbo | Pedir DBA pra dar grant; alternativa: GRANT CREATE TABLE TO usr_sist_AzureAI_Gateway_hom |
+| `Dirty database version 1. Fix and force version.` | Migration 001 falhou parcial | Conectar no SQL, `UPDATE dbo.schema_migrations SET dirty=0` (mais detalhes em `roadmap.md` §6) |
 
-**Request 1 — Tier 2 com PII regex + Language**
-- Token: `AppPro`
-- Endpoint Azure (o que você cadastrou)
-- Cenário: "PII regex — CPF + cartão + telefone BR" no dropdown de exemplos
-- Modelo: `gpt-4.1`
+Em qualquer falha, **não tentar mexer no código** — anotar o sintoma + me avisar.
 
-**Request 2 — Tier 3 com guardrails completos** (se você tiver Content Safety configurado)
-- Token: `AppVault`
-- Cenário: "Sanidade — pergunta simples"
-- Modelo: `gpt-4.1-mini`
+### Passo 4 — Criar admin inicial e validar UI
 
-**Request 3 — Tier 1 sem guardrails** (baseline)
-- Token: `AppBasico`
-- Cenário: "Sanidade — pergunta simples"
-- Modelo: `gpt-4.1-nano`
+Depois que o gateway estiver bootando limpo, **antes** de testar requests:
 
-**O que olhar:**
+```pwsh
+$env:DATABASE_URL = "sqlserver://usr_sist_AzureAI_Gateway_hom:$(az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom --query value -o tsv)@BRSPVPDEV003:1433?database=AzureAI_Gateway_hom&encrypt=true&trustServerCertificate=true"
+go run ./cmd/admin-create -username admin -role admin
+# Senha: ... (digita interativamente)
+```
 
-1. **Header de cada response** (clica em "Headers" no painel Response do Playground):
-   ```
-   X-Gateway-Latency-Breakdown: auth=2;mask=180;guardrails=0;provider=2400;encode=3
-   ```
-   Os 5 campos devem estar presentes, com valores inteiros em ms.
+Acessa `http://localhost:8080/ui` → login admin → confirma que aba Aplicações está vazia (banco novo).
 
-2. **Query no Postgres** depois de rodar tudo:
-   ```sql
-   SELECT request_id, application_name, tier, model, latency_ms,
-          lat_auth_ms, lat_mask_ms, lat_guardrails_ms,
-          lat_provider_ms, lat_encode_ms,
-          latency_ms - COALESCE(lat_auth_ms,0) - COALESCE(lat_mask_ms,0)
-                     - COALESCE(lat_guardrails_ms,0) - COALESCE(lat_provider_ms,0)
-                     - COALESCE(lat_encode_ms,0) AS other_ms
-   FROM usage_events
-   WHERE lat_provider_ms IS NOT NULL
-   ORDER BY created_at DESC
-   LIMIT 20;
-   ```
+### Passo 5 — Criar 1 aplicação + 1 endpoint + smoke do proxy
 
-   Verifique:
-   - Linhas antigas (pré-migration) têm `NULL` nas 5 colunas novas — esperado
-   - Linhas novas têm valores inteiros
-   - `other_ms` (subtração) fica em 1-10ms tipicamente. Se algum request der
-     `other_ms > 50ms`, anote o `request_id` — vira investigação
+Pela UI:
+1. Criar app **AppPro** (Tier 2, allowed_models `[gpt-4.1-mini, gpt-4.1-nano]`, streaming permitido). Anotar token gerado.
+2. Criar endpoint **azure-foundry** (slug `danielv2`, provider_kind `azure_openai`, `provider_config: {"api_version": "2025-01-01-preview", "model_to_deployment": {"gpt-4.1-mini":"gpt-4.1-mini"}}`).
+3. Adicionar 1 target ao endpoint (URL do Azure OpenAI; auth_type=`api_key_header` com a Azure key).
+4. Na aba Acessos da app, conceder grant ao endpoint.
 
-3. **Análise agregada** (depois de ≥10 requests):
-   ```sql
-   SELECT application_name, tier,
-          AVG(lat_auth_ms)::int       AS avg_auth,
-          AVG(lat_mask_ms)::int       AS avg_mask,
-          AVG(lat_guardrails_ms)::int AS avg_guardrails,
-          AVG(lat_provider_ms)::int   AS avg_provider,
-          AVG(lat_encode_ms)::int     AS avg_encode,
-          AVG(latency_ms)::int        AS avg_total
-   FROM usage_events
-   WHERE created_at >= NOW() - INTERVAL '1 hour'
-     AND lat_provider_ms IS NOT NULL
-   GROUP BY application_name, tier;
-   ```
+Faz request:
+```pwsh
+curl -i -X POST "http://localhost:8080/v1/proxy/danielv2/chat/completions" `
+  -H "Authorization: Bearer gwk_apppro_<rest>" `
+  -H "Content-Type: application/json" `
+  -d '{\"model\":\"gpt-4.1-mini\",\"messages\":[{\"role\":\"user\",\"content\":\"oi\"}]}'
+```
+
+Esperado: `200 OK` + header `X-Gateway-Latency-Breakdown` + body OpenAI-compatible.
+
+Se passar, **smoke test fechado**. ADR-0022 status passa de `proposed` → `accepted`.
 
 ---
 
-## 3. Como interpretar os resultados — decisão da próxima onda
+## 3. Cenários de resultado e próxima frente
 
-A próxima onda depende do que essa validação mostrar. Cenários:
-
-### Cenário A — `lat_provider_ms` >> resto (esperado)
-
-Exemplo: `provider=2400 mask=180 auth=2 encode=3 guardrails=0`.
-
-**Significado:** Azure é o gargalo (~85-95% do total). Gateway adiciona
-~200ms (Language + outros). Não dá pra reduzir Azure.
-
-**Próxima onda recomendada:** **Streaming Tier 3** (P1 Desempenho). Reduz
-**perceived latency** drasticamente — primeiro token chega em 200-500ms em
-vez do user esperar 2.5s pela resposta inteira.
-
-### Cenário B — `lat_mask_ms` alto e variável
-
-Exemplo: alguns requests com `mask=400+`.
-
-**Significado:** Azure Language está lento em casos específicos (talvez
-prompts grandes ou degraded SLO).
-
-**Próxima onda recomendada:** **Azure Language em paralelo com regex**
-(P2 Desempenho, revisita decisão da Onda 4). Latência total = max(local,
-cloud) em vez de soma. Ganho ~50ms p50.
-
-### Cenário C — `other_ms` > 50ms
-
-**Significado:** tem trabalho fora dos 5 buckets que não está sendo
-medido. Provavelmente middleware (chi, auth, audit emit).
-
-**Próxima onda recomendada:** **Instrumentar middleware** (extensão da
-Onda 6 — adicionar Mark no middleware de auth). Ou investigação ad-hoc
-com `slog.Debug` antes de virar onda.
-
-### Cenário D — `lat_auth_ms + lat_encode_ms` > 30ms
-
-**Significado:** DB hits ou serialização pesando. Vale cache.
-
-**Próxima onda recomendada:** **Cache de policy/endpoint/grant lookup**
-(P1 Desempenho). LRU+TTL em memória. ~5-10ms ganho consistente.
+| Smoke test resultado | Próxima onda |
+|---|---|
+| Tudo verde, request retorna 200 | **ADR-0022 → accepted**, retomar **Caminho 1 da Onda 6** (10–20 requests pra validar header `X-Gateway-Latency-Breakdown`), depois rodar a query SQL única de fechamento da Onda 6 |
+| Migration falha por permissão | Coordenar com DBA antes de qualquer outra coisa — sem isso o resto não roda |
+| Migration aplica mas request 500 | Anotar erro do log + me chamar — provavelmente bug residual no port de algum repo |
+| Bug 2 (Acessos não persiste) ainda aparece | Reproduzir com DevTools Network aberto; manda log do gateway (deve aparecer `event_type=grant_created` ou `grant_revoked` com o `application_id`/`endpoint_id`) |
 
 ---
 
-## 4. Decisões em aberto (não bloqueiam mas precisam fechar quando virarem prioridade)
+## 4. Decisões em aberto
 
-### 4.1 Desacoplamento do frontend (registrado em `roadmap.md` §4.1)
+Anotadas pra não esquecer; **não bloqueiam** o smoke test.
 
-5 sub-decisões antes de virar PR:
-- Como o frontend descobre o endpoint do gateway? (env var no build? config runtime?)
-- CORS: hoje aceita `localhost:5173`; prod precisa configurar
-- Versionamento: como negociar quando front e back têm versões diferentes?
-- Plataforma de deploy: S3+CloudFront / Vercel / Cloudflare Pages / GitHub Pages
-- Repo: monorepo separado ou novo do zero (histórico migra?)
+### 4.1 Compilado de docs gerais no Obsidian (sugerido pelo owner)
+**Pedido (2026-05-27):** "tem uma skill MCP pro meu obsidian, ia ser interessante documentar nele também — compilado de documentações gerais, stacks, infra, comandos, how to use, etc."
 
-**Sem urgência.** Quando virar prioridade, abrir ADR-0022.
+**Escopo proposto** (a fechar):
+- Estrutura: 1 cluster por eixo (Stack, Infra, Comandos, How-to-Use, ADRs, Decisões)
+- Fonte da verdade: docs/* deste repo (preservar fidelidade — não inventar nem deduzir)
+- Quando: depois do smoke test passar; usar a skill `obsidian-knowledge-vault` (já disponível) pra gerar/manter as notas
 
-### 4.2 Cache de prompts (semantic) — registrado em `roadmap.md` §4.3
+**Sem urgência.** Quando virar prioridade, abrir tarefa dedicada (não vira ADR — é doc operacional externa).
 
-Decidido: hash exato (não embedding). 4 perguntas em aberto:
-- Tier do cache: por endpoint? por aplicação? global?
-- TTL default
-- Headers de cache control (`Cache-Control: no-cache` força bypass?)
-- Métricas: hit rate, savings em $/mês
+### 4.2 Bug 2 — Acessos não persiste
+Diagnóstico no commit `f4b5e6e` ficou inconclusivo no código. Instrumentação adicionada em `internal/app/adminservice/service.go` (logs `event_type=grant_created`/`grant_revoked`). Aguarda reprodução com DevTools Network aberto pra ver o status do POST e do GET subsequente.
 
-**Sem urgência.** É P3 (Phase 3 escalabilidade).
+### 4.3 Caminho 2 — Latency trace no log estruturado
+Registrado em `roadmap.md` §3.1 (P2). Propagar `*LatencyTrace` via `r.Context()` pra que o middleware `Logging` enriqueça `request_completed` com os 5 buckets. Diff esperado: ~30 LOC. Sem urgência — Caminho 1 (header) ainda funciona pra validação.
+
+### 4.4 Desacoplamento do frontend (roadmap.md §4.1)
+5 sub-decisões pendentes. Sem urgência — anotado.
+
+### 4.5 Cache de prompts (semantic) — roadmap.md §4.3
+P3, sem urgência.
 
 ---
 
-## 5. Trabalho parado / dívidas conhecidas
+## 5. Dívidas conhecidas
 
-Itens que **NÃO** são pendência de Onda 6, mas vale lembrar:
+### 5.1 Migrations PG em `migrations/postgres-legacy/`
+Movidas pra subdir como referência histórica. `golang-migrate` ignora subdirs, então não rodam. **Não apagar** — são úteis pra entender a evolução do schema antes da troca.
 
-### Migration 007 — recadastro de targets necessário se houver órfãos
+### 5.2 ADR-0022 status = proposed
+Vira `accepted` após smoke test (Passo 5 acima). Atualizar manualmente o status na seção do ADR depois.
 
-A Onda 5/migration 007 corrigiu `api_keys.application_id UNIQUE` que bloqueava
-rotação. Se a rotação falhou várias vezes antes do fix, podem ter ficado
-linhas órfãs no DB. Query pra confirmar:
+### 5.3 SPEC.md desatualizada
+O contrato (`SPEC.md`) ainda menciona PostgreSQL/pgx em várias seções. Foi parcialmente atualizada nesta sessão; o resto fica como tech debt (não bloqueia operação). Itens já anotados em `roadmap.md` §6.
 
-```sql
-SELECT a.name, k.id, k.key_prefix, k.created_at, k.rotated_at
-FROM applications a
-JOIN api_keys k ON k.application_id = a.id
-WHERE k.rotated_at IS NULL
-ORDER BY a.name, k.created_at DESC;
-```
+### 5.4 Onda 4.5 — Target credentials no KV (ainda não iniciada)
+Resolve o problema "rotacionar `DB_ENCRYPTION_KEY` quebra targets". Próxima onda sugerida **depois** que o ambiente SQL Server estiver estável. Escopo completo em `roadmap.md` §3.3.
 
-Se a mesma `application_name` aparecer 2x ou mais com `rotated_at IS NULL`,
-limpe mantendo só a mais recente:
-
-```sql
-UPDATE api_keys SET rotated_at = NOW()
-WHERE rotated_at IS NULL
-  AND id NOT IN (
-    SELECT MAX(id) FROM api_keys WHERE rotated_at IS NULL GROUP BY application_id
-  );
-```
-
-### Onda 4.5 — Target credentials no KV (ainda não iniciada)
-
-Resolve definitivamente o problema "rotacionar `DB_ENCRYPTION_KEY` quebra
-targets" que você viveu. Está marcada como P1 Segurança e é a **próxima
-onda sugerida** depois de validar a Onda 6. Escopo completo em
-`roadmap.md` §3.3.
-
-### Latência ainda dominada pelo Azure
-
-Premissa importante pra discussão amanhã: o gateway está adicionando
-~150-310ms ao total (~85-95% é Azure puro). Mesmo otimizando tudo no
-gateway, latência mínima ficará em ~1.5s pra `gpt-4.1`. Pra "latência
-perceived menor", a frente real é **streaming**, não otimizar pipeline.
+### 5.5 Latência ainda dominada pelo Azure
+Premissa permanente: o gateway adiciona ~150-310ms ao total (~85-95% é Azure puro). Mesmo otimizando, latência mínima fica em ~1.5s pra `gpt-4.1`. Pra "latência perceived menor", a frente real é **streaming**, não otimizar pipeline.
 
 ---
 
@@ -334,7 +196,18 @@ git log --oneline -5
 # Validar que tudo ainda buila
 go vet ./...
 go build ./...
-go test ./...
+go test -count=1 -race ./...
+
+# Pegar a senha do SQL Server pro admin-create (sem expor no shell history)
+$env:DATABASE_URL = "sqlserver://usr_sist_AzureAI_Gateway_hom:$(az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom --query value -o tsv)@BRSPVPDEV003:1433?database=AzureAI_Gateway_hom&encrypt=true&trustServerCertificate=true"
+
+# Criar admin
+go run ./cmd/admin-create -username admin -role admin
+
+# Limpar dirty state do schema_migrations (se uma migration falhar parcial)
+# Conecta via tab Database do GoLand ou sqlcmd e roda:
+#   UPDATE dbo.schema_migrations SET dirty = 0;
+#   (se quiser regredir, use também: UPDATE dbo.schema_migrations SET version = N;)
 
 # Frontend (se quiser rodar separado em dev)
 cd web
@@ -343,26 +216,22 @@ npm run dev   # Vite em http://localhost:5173
 # Frontend embedado (build pro Go go:embed)
 cd web
 npm run build
-
-# Subir Postgres se não estiver
-docker compose up -d postgres
 ```
 
 ---
 
-## 7. Quem está nas Run Configurations do GoLand
+## 7. Run Configurations do GoLand
 
-Lembre que pra rodar localmente você precisa de:
-- **gateway** (Run Config principal, `cmd/gateway`, `.env` carregado pelo plugin EnvFile, working dir = raiz do projeto)
-- **admin-create** (CLI, só pra provisionar admin novo, raramente usada)
+Pra rodar localmente:
+- **gateway** — Run Config principal, `cmd/gateway`, `.env` carregado pelo plugin EnvFile, working dir = raiz do projeto
+- **admin-create** — CLI, só pra provisionar admin novo, raramente usada
 
 Variáveis críticas no `.env`:
-- `KEYVAULT_URI=https://danieldev.vault.azure.net/`
+- `KEYVAULT_URI=https://danieldev.vault.azure.net/` — pra resolução de `${kv:...}`
 - `AZURE_OPENAI_ENDPOINT=https://danie-mc4ryviy-westeurope.cognitiveservices.azure.com`
 - `AZURE_LANGUAGE_ENDPOINT=https://tp-language-pii.cognitiveservices.azure.com`
-- `DATABASE_URL=postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable`
+- **NÃO precisa mais `DATABASE_URL` pro gateway** (config estruturado em `configs/gateway.yaml`); só `admin-create` ainda usa.
 
-Auth Azure: `az login --tenant c050c98c-b463-4591-ac3b-deb782c0ba6e`
-(tem MFA — fluxo interativo pelo browser).
+Auth Azure: `az login --tenant c050c98c-b463-4591-ac3b-deb782c0ba6e` (tem MFA — fluxo interativo pelo browser).
 
 Detalhes completos em `docs/local-development.md` e `docs/keyvault-setup.md`.

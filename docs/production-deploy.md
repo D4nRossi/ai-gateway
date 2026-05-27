@@ -112,15 +112,17 @@ docker push $ACR_NAME/ai-gateway:1.0.0
 
 Nunca passe segredos em `configs/gateway.yaml` diretamente. O YAML usa `${VAR}` expandido no boot.
 
-| Variável | Descrição |
+| Variável / Config | Descrição |
 |---|---|
-| `DATABASE_URL` | `postgres://user:pass@host:5432/dbname?sslmode=require` |
-| `AZURE_OPENAI_ENDPOINT` | URL do recurso Azure OpenAI |
-| `AZURE_OPENAI_API_KEY` | Chave da API Azure OpenAI |
-| `AZURE_CS_ENDPOINT` | (Tier 3) URL do Content Safety |
-| `AZURE_CS_API_KEY` | (Tier 3) Chave do Content Safety |
+| `KEYVAULT_URI` (env) | URL do vault que resolve `${kv:...}` (ADR-0018) |
+| `database.*` em `gateway.yaml` (ADR-0022) | Bloco estruturado: `driver: sqlserver`, `host`, `port`, `database`, `user`, `password: ${kv:AzureAIGateway-DB-Password-hom}`, `schema: gogateway`, `encrypt: true` |
+| `AZURE_OPENAI_ENDPOINT` (env) | URL do recurso Azure OpenAI |
+| `${kv:AZURE-OPENAI-API-KEY}` | Chave da API Azure OpenAI |
+| `AZURE_CS_ENDPOINT` (env) | (Tier 3) URL do Content Safety |
+| `${kv:AZURE-CS-API-KEY}` | (Tier 3) Chave do Content Safety |
+| `${kv:DB-ENCRYPTION-KEY}` | 64 hex chars (AES-256) para cifrar target credentials |
 
-Em produção, use `sslmode=require` na `DATABASE_URL` para criptografar a conexão com o banco.
+Em produção, use `database.encrypt: true` + `database.trust_server_certificate: false` no `gateway.yaml` (com certificado válido do PKI corporativo).
 
 ---
 
@@ -154,14 +156,16 @@ Para produção real (multi-instância), substitua Docker Compose por Kubernetes
 - [ ] `key_hash` de todas as aplicações são SHA-256 reais (64 chars hex), não `<sha256 hex>`
 - [ ] `monthly_budget_brl` definido para cada aplicação
 - [ ] `logging.raw_prompt_logging: false` (nunca mudar em produção)
-- [ ] `azure_openai.api_key` e `database.url` nunca escritos diretamente no YAML — apenas `${VAR}`
+- [ ] `azure_openai.api_key` e `database.password` nunca escritos diretamente no YAML — sempre via `${kv:...}` (ADR-0018, ADR-0022)
 - [ ] `configs/gateway.yaml` não contém valores de chaves reais
 
 ### Rede
 - [ ] Gateway não exposto diretamente na internet — está atrás de NGINX, API Gateway ou firewall
 - [ ] TLS terminado no load balancer / edge (o gateway não faz TLS por design — SPEC §14.5)
-- [ ] `DATABASE_URL` usa `sslmode=require`
-- [ ] Porta 5432 do PostgreSQL não está exposta externamente
+- [ ] `database.encrypt: true` e `trust_server_certificate: false` no `gateway.yaml` (ADR-0022)
+- [ ] Porta 1433 do SQL Server não está exposta externamente (rede interna apenas; gateway acessa via VPN/peering)
+- [ ] Schema `gogateway` existe e o user do gateway tem permissão de CREATE/SELECT/INSERT/UPDATE/DELETE nele
+- [ ] Secret da senha do banco cadastrado no Key Vault (não em `.env`)
 
 ### Container
 - [ ] Imagem usa `alpine:3.21` (não `latest`)

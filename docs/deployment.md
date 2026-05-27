@@ -1,6 +1,14 @@
 # Deployment — sem Kubernetes
 
-Topologia recomendada para Fase 1 (demo / piloto):
+> **⚠️ Status:** este documento descreve a **topologia legacy de Phase 1
+> (Postgres em container)**. Em homologação (ADR-0022) o banco é SQL Server
+> corporativo gerenciado em `BRSPVPDEV003`, não rodando em container do mesmo
+> host. Esta página é preservada como referência caso volte a fazer sentido
+> rodar standalone (e.g. demos isoladas com `mcr.microsoft.com/mssql/server`),
+> mas as configs canônicas de banco vivem em `docs/keyvault-setup.md` e
+> `docs/production-deploy.md`.
+
+Topologia recomendada para Fase 1 (demo / piloto) ou para deploys standalone:
 
 ```
 ┌──────────┐    443/TLS    ┌──────────┐    8080/HTTP    ┌──────────┐
@@ -9,9 +17,13 @@ Topologia recomendada para Fase 1 (demo / piloto):
 └──────────┘               └──────────┘                 └──────┬───┘
                                                               │
                                                        ┌──────▼──────┐
+                                                       │  Banco      │
+                                                       │ Phase 1:    │
                                                        │  postgres   │
-                                                       │ (Docker ou  │
-                                                       │  managed)   │
+                                                       │  (Docker)   │
+                                                       │ v2/ADR-0022:│
+                                                       │  SQL Server │
+                                                       │  remoto     │
                                                        └─────────────┘
 ```
 
@@ -21,8 +33,11 @@ Componentes:
   e proxy reverso para o serviço `gateway`. Single binary, zero-config.
 - **gateway** roda como container Docker, sem porta exposta para internet —
   só Caddy enxerga.
-- **postgres** em container Docker no mesmo host, ou managed (Azure Database
-  / RDS / Aurora) para produção real.
+- **Banco**: Phase 1 era Postgres em container Docker no mesmo host (caminho
+  documentado aqui). Após ADR-0022, é SQL Server corporativo remoto
+  (`BRSPVPDEV003:1433`); gateway acessa via VPN/peering. Para demos isoladas,
+  ainda é possível subir `mcr.microsoft.com/mssql/server:2022-latest` no
+  mesmo host como substituto temporário.
 
 ## 1. Preparação do host
 

@@ -49,7 +49,7 @@ internal/
 ├── audit/                ← AuditEvent + writer assíncrono → audit_events
 │
 ├── db/
-│   ├── pool.go           ← pgxpool com ping de validação no boot
+│   ├── pool.go           ← `*sql.DB` + microsoft/go-mssqldb, ping de validação no boot (ADR-0022)
 │   └── migrate.go        ← golang-migrate (up idempotente no boot)
 │
 └── api/
@@ -153,7 +153,7 @@ Três workers rodam como goroutines em background a partir do boot:
 Handler
   │ Emit() ← non-blocking (select/default)
   ▼
-chan (buffer 10.000) ─→ worker goroutine ─→ INSERT/UPSERT no PostgreSQL
+chan (buffer 10.000) ─→ worker goroutine ─→ INSERT/MERGE em gogateway.* no SQL Server
 ```
 
 Se o canal encher (> 10.000 eventos em voo), o evento é **descartado** com `warn` log (`event_type=usage_dropped`). Isso protege a latência do request mas pode resultar em lacunas sob carga extrema.
@@ -179,15 +179,37 @@ O token nunca é logado. Apenas o `key_prefix` pode aparecer em logs.
 
 ---
 
-## Fluxo de dados no PostgreSQL
+## Fluxo de dados no SQL Server
+
+Schema dedicado `gogateway` (ADR-0022) isola as tabelas do gateway das outras
+aplicações que vivem no mesmo banco `AzureAI_Gateway_hom`.
 
 ```
-usage_events    ← uma linha por request concluído
-audit_events    ← uma ou mais linhas por request (cada decisão de política)
-budget_counters ← uma linha por (app, YYYYMM); UPSERT acumulativo
+gogateway.usage_events    ← uma linha por request concluído
+gogateway.audit_events    ← uma ou mais linhas por request (cada decisão de política)
+gogateway.budget_counters ← uma linha por (app, YYYYMM); MERGE acumulativo
+gogateway.applications    ← config de cada consumidor (DB-backed via Admin API)
+gogateway.api_keys        ← key_prefix + key_hash; partial UNIQUE em key_prefix WHERE rotated_at IS NULL
+gogateway.proxy_endpoints ← endpoints HTTP do proxy plane
+gogateway.proxy_targets   ← targets de cada endpoint (auth_config_enc cifrado AES-256-GCM)
+gogateway.application_endpoint_grants ← ACL aplicação↔endpoint
+gogateway.admin_users     ← admins do console (bcrypt)
+gogateway.admin_sessions  ← sessões opacas com filtered index em token_hash WHERE revoked_at IS NULL
 ```
 
-As migrations rodam automaticamente no boot (`db.RunMigrations`) e são idempotentes (golang-migrate rastreia versão aplicada).
+As migrations rodam automaticamente no boot (`db.RunMigrations`) e são
+idempotentes (`golang-migrate` rastreia versão aplicada na tabela
+`dbo.schema_migrations` — fica fora do schema gogateway por design,
+preservando a separação entre dados do gateway e metadados de deployment).
+
+Sintaxe T-SQL relevante usada nos repos:
+
+- Param binding nomeado posicional: `@p1, @p2, ...`
+- `INSERT ... OUTPUT INSERTED.id` substitui o `RETURNING` do PG
+- `IF NOT EXISTS (SELECT 1 ...) INSERT ...` substitui `ON CONFLICT DO NOTHING`
+- `MERGE WITH (HOLDLOCK)` substitui `INSERT ... ON CONFLICT DO UPDATE` (budget upsert)
+- `SYSUTCDATETIME()` substitui `NOW()`
+- `errors.Is(err, sql.ErrNoRows)` substitui `pgx.ErrNoRows`
 
 ---
 

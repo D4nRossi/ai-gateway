@@ -96,11 +96,17 @@ az keyvault secret set `
   --name DB-ENCRYPTION-KEY `
   --value $key
 
-# DATABASE URL completa (postgres://user:pass@host:port/db?sslmode=...)
+# Senha do user de serviço do SQL Server (ADR-0022).
+# A senha veio do DBA. NUNCA cole em arquivo, sempre via stdin/aspas simples.
 az keyvault secret set `
   --vault-name danieldev `
-  --name DATABASE-URL `
-  --value "postgres://gateway:gateway@localhost:5432/gateway?sslmode=disable"
+  --name AzureAIGateway-DB-Password-hom `
+  --value '<COLE_A_SENHA_AQUI_ENTRE_ASPAS_SIMPLES>'
+
+# (Legacy) DATABASE-URL do Postgres — mantida no KV por compatibilidade caso
+# alguém ainda use o caminho antigo (`cmd/admin-create` aceita DATABASE_URL).
+# Hoje o gateway lê os campos estruturados em configs/gateway.yaml e não usa
+# esse secret. Pode ser apagado quando todos os ambientes estiverem migrados.
 
 # Content Safety (opcional — só se for usar Tier 3)
 az keyvault secret set `
@@ -140,30 +146,52 @@ KEYVAULT_URI=https://danieldev.vault.azure.net/
 
 ### 4.2 Substituir as referências no `configs/gateway.yaml`
 
-Trocar de:
+Trocar de (config legacy `.env`-only):
 
 ```yaml
 azure_openai:
   api_key: ${AZURE_OPENAI_API_KEY}
 
 database:
-  url: ${DATABASE_URL}
+  driver: sqlserver
+  host: BRSPVPDEV003
+  port: 1433
+  database: AzureAI_Gateway_hom
+  user: usr_sist_AzureAI_Gateway_hom
+  password: ${DB_PASSWORD}                  # ← em .env, plaintext
+  schema: gogateway
   encryption_key_hex: ${DB_ENCRYPTION_KEY}
 ```
 
-Para:
+Para (config atual com KV — ADR-0018 + ADR-0022):
 
 ```yaml
 azure_openai:
   api_key: ${kv:AZURE-OPENAI-API-KEY}
 
+azure_language:
+  api_key: ${kv:AZURE-LANGUAGE-API-KEY}
+
 database:
-  url: ${kv:DATABASE-URL}
+  driver: sqlserver
+  host: BRSPVPDEV003
+  port: 1433
+  database: AzureAI_Gateway_hom
+  user: usr_sist_AzureAI_Gateway_hom
+  password: ${kv:AzureAIGateway-DB-Password-hom}   # ← KV; nunca em texto
+  schema: gogateway
+  encrypt: true
+  trust_server_certificate: true            # false em produção com cert válido
   encryption_key_hex: ${kv:DB-ENCRYPTION-KEY}
 ```
 
 E pode remover essas linhas do `.env`. O `KEYVAULT_URI` e os endpoints
 não-segredos (`AZURE_OPENAI_ENDPOINT`) continuam no `.env`.
+
+**Nota de naming**: o secret da senha do banco usa
+`AzureAIGateway-DB-Password-hom` (camelCase + sufixo de ambiente) porque o
+vault `danieldev` é compartilhado com outros projetos. Prefixar pelo projeto
+deixa explícito quem usa cada secret.
 
 ### 4.3 Reiniciar o gateway
 

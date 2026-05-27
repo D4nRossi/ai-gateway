@@ -25,19 +25,44 @@ IDEs recomendados (opcional):
 
 ---
 
-## 1. Subir o banco
+## 1. Conexão com o banco (SQL Server corporativo)
 
-Idêntico nos dois SOs:
+**Importante (ADR-0022):** o gateway opera contra **SQL Server gerenciado**, não
+mais Postgres em container local. Em homologação:
 
-```bash
-docker compose up -d postgres
+- Host: `BRSPVPDEV003:1433`
+- Banco: `AzureAI_Gateway_hom`
+- User: `usr_sist_AzureAI_Gateway_hom`
+- Schema dedicado: `gogateway` (isolado de outras aplicações no mesmo banco)
+- Senha: vive **exclusivamente** no Azure Key Vault (`AzureAIGateway-DB-Password-hom` no vault `danieldev`)
 
-# Verificar que subiu
-docker compose ps
-# postgres   running   0.0.0.0:5432->5432/tcp
-```
+### Pré-requisitos de rede e permissão
 
-O banco é criado automaticamente com usuário `gateway`, senha `gateway`, banco `gateway`.
+| Item | Como validar |
+|---|---|
+| VPN / firewall ao SQL Server | `Test-NetConnection BRSPVPDEV003 -Port 1433` (Windows) ou `nc -vz BRSPVPDEV003 1433` |
+| `az login` no tenant correto | `az account show --query tenantId` (esperado: `c050c98c-b463-4591-ac3b-deb782c0ba6e`) |
+| Secret no KV | `az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom --query "{name:name,enabled:attributes.enabled}"` |
+| User com permissão de CREATE SCHEMA / CREATE TABLE | conferir com o DBA — sem isso a primeira migration falha |
+
+### Não há mais `docker compose postgres`
+
+O `docker-compose.yml` legado continua no repo (referência), mas **não roda
+mais o banco**. Dev local sem VPN ao SQL Server corporativo:
+
+- Roda contra o banco real via VPN (caminho normal)
+- OU sobe um container SQL Server local pra testes (ad-hoc):
+
+  ```pwsh
+  docker run -d --name mssql-dev `
+    -e "ACCEPT_EULA=Y" -e "MSSQL_SA_PASSWORD=DevP@ss1234" `
+    -p 1433:1433 `
+    mcr.microsoft.com/mssql/server:2022-latest
+  # Aí ajuste configs/gateway.yaml: host=localhost, user=sa, password=DevP@ss1234, trust_server_certificate=true
+  ```
+
+  Esse caminho **não está documentado em produção** — é só pra quem precisa
+  rodar offline. Não popule dados sensíveis nele.
 
 ---
 
@@ -176,8 +201,10 @@ Modo mock, log JSON:
 
 ```json
 {"time":"...","level":"INFO","msg":"ai gateway starting","config_path":"configs/gateway.yaml"}
-{"time":"...","level":"INFO","msg":"postgres pool connected"}
-{"time":"...","level":"INFO","msg":"migrations applied","version":3}
+{"time":"...","level":"INFO","msg":"sqlserver connected","host":"BRSPVPDEV003","database":"AzureAI_Gateway_hom","schema":"gogateway"}
+{"time":"...","level":"INFO","msg":"applying migration","version":1}
+... (até version 9)
+{"time":"...","level":"INFO","msg":"migrations applied"}
 {"time":"...","level":"INFO","msg":"using mock provider"}
 {"time":"...","level":"INFO","msg":"server listening","addr":":8080"}
 ```
@@ -412,44 +439,51 @@ Veja [docs/testing.md](testing.md) para a documentação completa da suite.
 
 ## 9. Verificar dados no banco
 
-**Linux / macOS / WSL / Git Bash:**
+### Pelo GoLand (recomendado)
 
-```bash
-docker exec -it $(docker compose ps -q postgres) psql -U gateway -d gateway
+GoLand tem tab **Database** (lateral direita). Adicione uma data source:
+
+- **Type:** Microsoft SQL Server
+- **Host:** `BRSPVPDEV003`
+- **Port:** `1433`
+- **Database:** `AzureAI_Gateway_hom`
+- **User:** `usr_sist_AzureAI_Gateway_hom`
+- **Password:** pegue do KV: `az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom --query value -o tsv`
+- **Driver options:** `encrypt=true`, `trustServerCertificate=true` (homolog)
+
+### Pelo `sqlcmd` (CLI)
+
+```pwsh
+$pw = az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom --query value -o tsv
+sqlcmd -S BRSPVPDEV003,1433 -d AzureAI_Gateway_hom -U usr_sist_AzureAI_Gateway_hom -P $pw -C
+# -C = TrustServerCertificate; remover em prod
 ```
 
-**Windows PowerShell:**
-
-```powershell
-docker exec -it (docker compose ps -q postgres) psql -U gateway -d gateway
-```
-
-> PowerShell trata `(comando)` como substituição de saída para argumentos de native commands, então a forma com parênteses funciona — diferente do bash que precisa de `$(...)`.
-
-Queries úteis (idênticas em qualquer cliente):
+Queries úteis (sempre com schema qualificado):
 
 ```sql
 -- Ver usage events recentes
-SELECT request_id, application_name, model, latency_ms, status_code, created_at
-FROM usage_events
-ORDER BY created_at DESC
-LIMIT 10;
+SELECT TOP 10 request_id, application_name, model, latency_ms, status_code, created_at
+FROM gogateway.usage_events
+ORDER BY created_at DESC;
 
 -- Ver audit events (decisões de política)
-SELECT request_id, application_name, event_type, severity, metadata, created_at
-FROM audit_events
-ORDER BY created_at DESC
-LIMIT 20;
+SELECT TOP 20 request_id, application_name, event_type, severity, metadata, created_at
+FROM gogateway.audit_events
+ORDER BY created_at DESC;
 
 -- Ver consumo de budget do mês atual
 SELECT application_name, period_yyyymm, total_requests, total_tokens, estimated_cost_brl
-FROM budget_counters;
+FROM gogateway.budget_counters;
 
 -- Rastrear um request específico pelo request_id
 SELECT event_type, severity, metadata, created_at
-FROM audit_events
+FROM gogateway.audit_events
 WHERE request_id = 'COLE-O-ID-AQUI'
 ORDER BY created_at;
+
+-- Estado das migrations (fora do schema gogateway, no schema default)
+SELECT version, dirty FROM dbo.schema_migrations;
 ```
 
 ---
@@ -492,11 +526,14 @@ $hash = -join ($hashBytes | ForEach-Object { '{0:x2}' -f $_ })
 | Sintoma | Causa provável | Solução |
 |---|---|---|
 | `config validation failed: server.port` | YAML mal-formado | Verificar indentação do `gateway.yaml` |
-| `connecting to postgres: pinging postgres` | Banco não está rodando | `docker compose up -d postgres` |
+| `pinging sqlserver: dial tcp BRSPVPDEV003:1433: no route to host` | VPN/firewall ausente | Conectar à VPN corporativa; testar com `Test-NetConnection` |
+| `pinging sqlserver: login failed` | Senha errada no KV ou user sem permissão | Conferir secret + permissão com DBA |
+| `Dirty database version N. Fix and force version.` | Migration N falhou parcialmente | `UPDATE dbo.schema_migrations SET dirty=0;` (e ajustar `version` se preciso) |
 | `401 unauthorized` ao chamar endpoint | `key_hash` errado no YAML ou token errado | Regenerar (seção 10) |
 | `403 model_not_allowed` | Modelo não está em `allowed_models` da app | Checar YAML da app |
 | `403 streaming_not_allowed` | App tem `streaming_allowed: false` | Usar AppPro ou habilitar no YAML |
-| Gateway sobe mas não persiste dados | Migrations não rodaram | Verificar log `"migrations applied"`; checar `DATABASE_URL` |
+| Gateway sobe mas não persiste dados | Migrations não rodaram | Verificar log `"migrations applied"`; checar bloco `database` em `gateway.yaml` |
+| Erro de constraint violada com nome estranho (`uq_*` ou `ck_*`) | Validação ISJSON / UNIQUE / CHECK em SQL Server | Ver `internal/api/admin/handlers/pgerrors.go` pra mapeamento humano |
 | `/readyz` retorna 503 para Azure | Sem `AZURE_OPENAI_API_KEY` ou em modo mock | Use `PROVIDER=mock` ou configure a chave |
 | Build falha com `go: module requires Go 1.25` | Go desatualizado | Atualizar via [go.dev/dl](https://go.dev/dl/) |
 | **(Windows)** `Invoke-WebRequest: Cannot bind parameter -H` | Usou `curl` em vez de `curl.exe` (alias do PowerShell) | Trocar para `curl.exe` ou usar `Invoke-RestMethod` |
