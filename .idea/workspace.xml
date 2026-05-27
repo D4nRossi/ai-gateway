@@ -4,9 +4,7 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/internal/infra/mssql/endpointrepo.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/infra/mssql/endpointrepo.go" afterDir="false" />
-    </list>
+    <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />

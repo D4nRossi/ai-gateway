@@ -11,11 +11,16 @@
 
 ## 1. Estado em que paramos
 
-**Data:** sessão fechada em 2026-05-27 (noite). Cinco frentes encadeadas:
-Onda 6 → fix Bug 1 (token mismatch) → ADR-0022 proposed → atualização do
-CLAUDE.md → troca PostgreSQL → SQL Server completa em código.
+**Data:** sessão fechada em 2026-05-27 (noite). Pacote da sessão: Onda 6
+(latency breakdown) → fix Bug 1 (token mismatch) → ADR-0022 →
+atualização do CLAUDE.md → troca PostgreSQL → SQL Server completa →
+smoke test passou → reorganização do roadmap.
 
-**Último commit aplicado:** `bee7c6f feat: troca PostgreSQL → SQL Server (ADR-0022, schema gogateway)`
+**Onda 7 (troca PG → SQL Server) está oficialmente entregue** (ADR-0022
+`accepted`). Smoke test rodou contra `BRSPVPDEV003`/`AzureAI_Gateway_hom`:
+migrations 001-010 aplicadas, 3 apps criadas via UI, 1 endpoint Azure,
+request `/v1/proxy/{slug}/chat/completions` respondeu 200 OK com header
+`X-Gateway-Latency-Breakdown` populado.
 
 ### O que está commitado (e validado em build/test)
 
@@ -29,11 +34,39 @@ CLAUDE.md → troca PostgreSQL → SQL Server completa em código.
 
 **Suite 100% verde:** `go vet ./...`, `go build ./...`, `go test -count=1 -race ./...` — 15 pacotes, sem race detector flags.
 
-### O que NÃO foi validado ainda (próximo passo crítico)
+### Próxima onda (P1)
 
-- **Smoke test ao vivo contra o SQL Server real** (BRSPVPDEV003 / AzureAI_Gateway_hom). Tudo o que está commitado passa em build/test mas nunca rodou contra o banco corporativo.
-- Validação ao vivo da Onda 6 (Caminho 1: header `X-Gateway-Latency-Breakdown` + 1 query SQL). Foi interrompida pela troca emergencial — retomar **depois** que o SQL Server estiver bootando limpo.
-- Bug 2 — Acessos não persiste (logs instrumentados no commit `f4b5e6e`; aguarda repro com DevTools Network).
+**Onda 8 — Streaming de áudio bidirecional via Azure Voice Live**
+(ADR-0023 a fazer). Owner anunciou em 2026-05-27 como próxima frente.
+Latência é variável crítica — todos os trade-offs serão decididos "menos
+pior". Escopo completo em `roadmap.md` §3.1.
+
+Sub-frentes em sequência:
+1. **Spike técnico** (1-2 dias): cliente isolado falando Voice Live
+   direto pra estabelecer baseline de latência (first-audio, RTT por
+   frame). Sem gateway no meio.
+2. **Proxy WebSocket** mínimo (pass-through dos bytes binários, sem
+   re-encode). Mede overhead. Target <30ms p95.
+3. **Auth + audit de sessão** (audio_session_started/ended).
+4. **Schema novo** `gogateway.audio_sessions` + usage tracking por sessão.
+5. **Tier policy** integrada (gravação de transcript? max_minutes?).
+6. **CS audit passthrough** das decisões do Voice Live.
+
+ADR-0023 a redigir quando entrar em execução.
+
+### Frentes pendentes (sem ETA específica, owner decide ordem)
+
+- **Validação ao vivo da Onda 6** (Caminho 1: header + 1 query SQL).
+  Interrompida pela troca de banco — retomar quando voltarem requests pro
+  Playground. Não bloqueia Onda 8.
+- **Bug 2 — Acessos não persiste** (logs instrumentados em `service.go`
+  `GrantAccess`/`RevokeAccess`). Aguarda repro com DevTools Network.
+- **Onda 4.5 — Target credentials no KV** (§3.3, P1 Segurança).
+  Desbloqueada agora que SQL Server está estável.
+- **SSO Entra ID / OIDC** (§3.3, P1 Segurança — ADR-0024 a fazer).
+  Depende de App Registration no Entra ID corporativo (TI).
+- **Modelos como CRUD + Page Models** (§3.4, P2 Requisitos —
+  ADR-0025 a fazer? — escopo a decidir).
 
 ---
 

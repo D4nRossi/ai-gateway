@@ -1,9 +1,18 @@
 # ADR-0022: Troca de PostgreSQL por SQL Server (banco corporativo de homologação)
 
-- **Status**: proposed
-- **Date**: 2026-05-27
+- **Status**: accepted
+- **Date**: 2026-05-27 (proposed) / 2026-05-27 (accepted após smoke test)
 - **Decision makers**: Daniel (owner)
 - **Consulted**: Claude Opus 4.7
+
+> **Acceptance note (2026-05-27):** smoke test passou contra BRSPVPDEV003.
+> Migrations 001-010 aplicadas no schema `gogateway`, 3 aplicações criadas
+> via Admin UI, 1 endpoint Azure cadastrado, request `/v1/proxy/{slug}/chat/completions`
+> respondeu 200 OK com header `X-Gateway-Latency-Breakdown` populado.
+> Anomalias resolvidas durante o smoke: (1) migration 005 deferred name
+> resolution, (2) bug do KV resolver com chars especiais na senha, (3) bug
+> do driver enviando `[]byte` como VARBINARY (provider_config). Documentadas
+> nos commits relevantes.
 
 ## Context
 

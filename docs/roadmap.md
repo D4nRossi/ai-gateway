@@ -71,14 +71,17 @@ Tudo abaixo está em produção no branch `v2`.
 
 ## 2. Em execução
 
-**Onda 6 — Latency Breakdown Observável (ADR-0021)** — código entregue,
-testes/validação ao vivo pendentes. Ver `docs/handoff.md` pra passos
-exatos de retomada amanhã.
+**Próxima onda (P1):** **Onda 8 — Streaming de áudio via Azure Voice Live**
+(ADR-0023 a fazer). Frente longa, latência-crítica. Spike técnico antes do
+desenho. Escopo completo em §3.1.
 
-Próximas sugeridas (depois da validação da Onda 6):
-- **Onda 4.5** — Target credentials no Key Vault (§3.3, P1 Segurança)
+**Pendentes planejadas (sem ordem fixa, owner decide):**
+- **Onda 4.5** — Target credentials no Key Vault (§3.3, P1 Segurança — antes
+  bloqueada pela troca de banco; agora desbloqueada)
+- **SSO Entra ID / OIDC** (§3.3, P1 Segurança — remove `gogateway.admin_users.root`)
+- **Modelos como CRUD + Page Models** (§3.4, P2 Requisitos — unifica YAML/DB)
 - **Cache de lookup** (§3.1, P1 Desempenho)
-- **Streaming Tier 3** (§3.1, P1 Desempenho)
+- **Streaming Tier 3 (HTTP SSE)** — diferente de streaming de áudio (§3.1)
 
 ---
 
@@ -91,6 +94,24 @@ Cada eixo lista frentes priorizadas e trade-offs. Prioridade é sugestão; ordem
 **Diagnóstico atual**: latência p50 ~1.7-3.3s pra Tier 2/3, dominada pelo Azure OpenAI (1.5-3s). Gateway adiciona ~150-310ms — principalmente o Azure Language PII (~150-300ms cloud call). Ganhos no gateway são em ordem de dezenas de ms.
 
 **Pontos atacáveis (impacto real):**
+
+- **P1 — Onda 8 — Streaming de áudio bidirecional via Azure Voice Live** (ADR-0023 a fazer). Frente extensa, latência-crítica. O owner deixou explícito: "latência é problema enorme nisso, precisamos da menor possível, vários trade-offs serão apresentados — sempre o menos pior". Sub-frentes e trade-offs em discussão:
+  - **Transporte:** WebSocket bidirecional passthrough (não REST chunked). Voice Live é stateful; HTTP REST quebraria a sessão. Gateway atua como proxy WebSocket transparente — TLS terminado, mas o frame binário passa intacto.
+  - **Codec:** passthrough total dos bytes do áudio. Re-encodar (PCM↔Opus) no gateway adiciona 50-100ms por frame, inaceitável. O gateway não decodifica/transcreve nada.
+  - **Auth:** bearer validado no upgrade WebSocket apenas. Revalidação mid-stream quebra UX (cortes inexplicáveis). Bearer expirar mid-call é problema operacional do app cliente, não do gateway.
+  - **Content Safety:** delegado ao Voice Live (que tem CS embutido pro modo de fala). Gateway **audita as decisões** que Voice Live tomou (logged via stream events), mas não duplica chamada paralela — cada hop adicional inflama latência.
+  - **Latency breakdown:** os buckets do ADR-0021 não aplicam a stream contínuo. Schema novo: tabela `gogateway.audio_sessions` (id, application_name, started_at, ended_at, audio_seconds_in, audio_seconds_out, voice_minutes_billed, first_audio_ms, disconnect_reason, estimated_cost_brl). ADR-0023 define schema.
+  - **Tier de segurança:** permitir áudio em todos os tiers; tier influencia política de gravação de transcript e retenção (Tier 3 = não grava). Bloquear áudio em Tier 3 seria over-engineering.
+  - **Tools / function calls:** fora do MVP — frente própria depois. Voice Live suporta, mas o gateway lidando com tool_calls em pipeline de áudio é complexo.
+  - **Multi-instance / scale:** 1 gateway aguenta ~1k conexões WebSocket simultâneas em VM modesta. Sharding por aplicação fica pra escalabilidade futura (§3.7).
+  - **Sequência sugerida:**
+    1. Spike técnico (1-2 dias): cliente isolado falando Voice Live direto, mede latency baseline (first-audio, RTT por frame).
+    2. Proxy WebSocket mínimo (gateway pass-through): mede overhead adicionado. Target <30ms p95.
+    3. Auth + audit de sessão (audio_session_started/ended).
+    4. Schema `audio_sessions` + usage tracking por sessão.
+    5. Tier policy (allowed_voices? max_minutes_per_session?).
+    6. CS audit passthrough das decisões do Voice Live.
+  - **ADR-0023 a redigir** quando virar execução. Cobre transporte, codec, schema, política, cancelation.
 
 - **P1 — Cache de policy/endpoint/grant lookup** (~5-10ms por request, baixo risco). Cada request hoje faz 2 DB hits pra resolver auth + grant. LRU+TTL em memória elimina ambos no cache hit. Invalidação: TTL curto (30-60s) ou pub/sub se virar multi-instance.
 - **P1 — Streaming permitido em Tier 3**. Hoje bloqueado porque Content Safety não tem stream nativo. Opções: (a) buffer completo do response, CS check, flush — aumenta latência total mas mantém Tier 3 igual; (b) confiar no pré-check de prompt e liberar stream — semântica diferente, exige ADR.
@@ -118,19 +139,43 @@ Tudo abaixo escreve em `audit_events` (ou tabela paralela).
 - **P2 — IP allowlist por aplicação**. Tabela `application_ip_allowlist`. Auth middleware rejeita com 403 se IP origem não está na lista (vazia = permite tudo).
 - **P3 — mTLS upstream opcional**. Target ganha campo `client_cert_pem` cifrado (KV). Transport per-target em vez do shared.
 - **P3 — 2FA TOTP pra admins**. Lote D do console-roadmap.
-- **P2 — SSO via Azure Entra ID (SAML)**. Substitui o login local com bcrypt
-  (ADR-0011) por federação OAuth2/SAML contra o Entra ID corporativo.
-  Quando aprovado, remove a migration 010 (admin `root` bootstrap) e
-  desativa users locais. Sem ETA — anotado em 2026-05-27 pelo owner como
-  "fica pro final apenas". Acoplado: revogar acessos quando funcionário sai
-  vira automático via grupo Entra ID. Quando virar prioridade, abrir ADR
-  específico.
+- **P1 — SSO via Azure Entra ID / OIDC**. Substitui o login local com bcrypt
+  (ADR-0011) por federação OAuth2/OpenID Connect contra o Entra ID
+  corporativo. Preferimos OIDC sobre SAML puro: mainstream em B2B moderno,
+  bibliotecas Go maduras (golang.org/x/oauth2 + go-oidc), e o flow PKCE
+  Authorization Code é o que o Console (SPA) precisa.
+  - **Escopo:**
+    - Backend: novo middleware `internal/api/admin/middleware/oidc.go` que valida
+      ID tokens contra o tenant do Entra ID. Substitui (ou coexiste com) o
+      `SessionAuth` atual.
+    - Frontend: redirect pro login do Entra ID em `/admin/auth/login`; recebe
+      o code no callback, troca por tokens, armazena no `sessionStorage`.
+    - Mapeamento de grupos Entra ID → roles (`admin`, `operator`, `viewer`)
+      via claim customizado ou app-role assignment.
+    - Migration de cleanup desativa `gogateway.admin_users` (mantém schema
+      pra fallback emergencial; em ambientes que perderam conectividade com
+      Entra ID, admin local consegue logar).
+    - Remove a migration 010 (`root` bootstrap) — não faz mais sentido com
+      SSO ativo.
+  - **Bloqueios:** depende de criar **App Registration no Entra ID corporativo**.
+    Esse passo envolve aprovação do time de identidade / TI. Pode demorar.
+  - **Trade-off:** complexidade aumenta (claim mapping, refresh tokens,
+    handling de token expiry no SPA). Beneficio: revogar acesso quando
+    funcionário sai é automático via grupo Entra ID.
+  - Quando virar execução, abrir **ADR-0024** específico.
 - **P3 — Secret rotation automation**. Gateway sabe rotacionar Azure key sem deploy quando KV detecta versão nova.
 
 ### 3.4 Requisitos
 
 Contratos, validação e padrões de erro.
 
+- **P2 — Modelos como CRUD (tabela `gogateway.models` + Page Models)**. Hoje há duas fontes de verdade pra modelos disponíveis: (a) `configs/gateway.yaml` `models:` — usado pelo handler legacy `/v1/chat/completions`; (b) `applications.allowed_models` — JSON array de strings literais por aplicação. Isso causa drift (adicionar modelo novo exige editar YAML E preencher allowed_models de cada app), e adicionar campo de cost por modelo via UI é impossível.
+  - **Proposta:** nova tabela `gogateway.models` (id BIGINT IDENTITY PK, public_name UNIQUE, deployment, provider, cost_input_per_1k_brl, cost_output_per_1k_brl, active, created_at, updated_at). Nova página `/ui/models` com CRUD completo.
+  - **`applications.allowed_models`** continua como JSON array, mas seus valores referenciam `models.public_name` (validação no service, não FK formal — mantém JSON flexível).
+  - **Tela de aplicação:** o campo `allowed_models` vira um **multi-select** populado por `GET /admin/v1/models`. Adicionar modelo novo na app vira clique, não digitar string.
+  - **Migration:** porta o conteúdo atual do `gateway.yaml :models` pra a nova tabela. CLI `cmd/seed-models` pra ambiente fresco (igual ao spirit do migration 010 que provisiona o root admin).
+  - **YAML perde `models:`** quando a tabela vira fonte única. Trade-off: deploy fresh precisa rodar `seed-models` OU a migration popula. Recomendo migration popular como "seed data" pra zero fricção.
+  - Quando virar execução, vira **Onda 9** (ou ADR-0025 dependendo do alcance).
 - **P2 — Payload size limits configuráveis por endpoint**. Hoje hard-coded em 1MB no chat. Endpoint Azure pode precisar mais; custom genérico pode aceitar menos.
 - **P2 — Error response standardization**. Hoje `/v1/chat/completions` retorna `{"error":{"message":...,"type":...}}` (OpenAI-style) e `/v1/proxy/*` retorna `{"error":{"code":...,"message":...}}`. Decisão de design: unificar ou manter dois (proxy precisa ser passthrough do upstream).
 - **P3 — Request signing opcional** (HMAC) pra apps de alto risco. Headers `X-Gateway-Signature` + `X-Gateway-Timestamp`. Anti-replay com timestamp window.
@@ -172,6 +217,12 @@ Dashboards nativos + retenção.
 
 Multi-instance + altíssima carga.
 
+- **P2 — Segregação hot/warm path em dois binários (Gateway + Admin/Worker)**. Hoje tudo roda num único processo `cmd/gateway`. Channel buffers (audit/usage/budget writers) já desacoplam IO async do hot path, mas conforme dashboards ganham complexidade (queries pesadas em `usage_events`, exports, jobs de retenção), a competição por CPU/DB connections começa a sangrar o hot path.
+  - **Hot path (Gateway — síncrono, latência-crítico):** `/v1/chat/completions`, `/v1/proxy/{slug}/*`, `/v1/audio/*` (futuro), `/healthz`, `/readyz`. Auth, rate limit, model allowlist, masking, CS check, provider call, emit async events.
+  - **Warm path (Admin/Worker — assíncrono, throughput):** `/admin/v1/usage`, `/admin/v1/audit`, `/admin/v1/budget` (queries dashboard); jobs de retenção (`PurgeExpiredSessions`, archive); reports/exports; eventual aggregate jobs (`daily_metrics`).
+  - **Implementação:** dois targets `cmd/gateway/` (hot, mantém) + `cmd/admin-api/` (warm, novo), **compartilhando o mesmo `internal/`** (sem duplicação de código de domínio/infra). Reverse proxy externo (Caddy/Nginx) roteia `/admin/*` pro warm, resto pro hot.
+  - **Quando segregar:** quando o hot path começa a sofrer pelo warm path competir CPU/memory/conexões DB. Em homolog é overkill — não fazer prematuramente.
+  - **Mensageria (Service Bus / Redis pub-sub / Kafka):** **não introduzir no MVP.** Channel buffer atual (10k) já dá ~10s de burst antes de back-pressure. Mensageria fica útil quando: (a) multi-instância — eventos compartilhados entre N gateways, (b) outros sistemas consumirem os eventos (analytics, BI externo), (c) durabilidade crítica — channel buffer perde se restart. Quando 1 dos 3 critérios bater, ADR-0026 (ou similar) avalia opções (Service Bus pra alinhamento Azure vs Redis simplicidade vs DB queue table).
 - **P1 — Redis rate limiter**. Substitui `golang.org/x/time/rate` in-memory. Interface `ratelimit.Limiter` já existe; basta nova impl. Permite múltiplas réplicas do gateway sem que cada uma tenha seu próprio bucket.
 - **P1 — Redis budget cache**. Pre-check de budget hoje faz query SQL por request. Em alta carga, cria pressão no DB. Cache com TTL 60s elimina.
 - **P2 — Particionamento mensal** de `gogateway.usage_events` e `gogateway.audit_events`. SQL Server table partitioning por `created_at` (partition function + scheme). Queries em janelas curtas (dashboard 24h) ficam triviais; cleanup é SWITCH partition + drop staging.
@@ -179,6 +230,16 @@ Multi-instance + altíssima carga.
 - **P2 — DB read replicas + pool tuning**. Connection pool por replica, leitura em replica pra queries de dashboard.
 - **P3 — Semantic cache de respostas** (semantic = hash exato do payload, não embedding). Redis com chave = SHA256(model + messages + temperature + max_tokens + ...). TTL configurável. Cache hit: response em <10ms, custo Azure zero. Trade-offs: invalidação por mudança de versão de modelo (rare), risco de resposta "velha" (mitigado por TTL curto), custo de manutenção do cluster Redis.
 - **P3 — Health checks robustos pra autoscaling**. `/readyz` já existe mas precisa: warmup detection (não responde ready até connection pool estar pronto), drain mode (responde 503 após SIGTERM enquanto drena conexões).
+
+### 3.8 Frontend / UX & Ferramentas auxiliares
+
+Eixo novo dedicado à camada visual e às ferramentas de produtividade do owner. Frentes aqui **não bloqueiam** features backend mas afetam ergonomia.
+
+- **P2 — Page Models (CRUD)** — referência cruzada com §3.4. Pré-requisito: tabela `gogateway.models` + endpoints admin `/admin/v1/models`. Tela: lista paginada + form criar/editar (public_name, deployment, provider, cost_input, cost_output, active toggle). A tela de aplicação ganha multi-select populado dessa lista (em vez de digitar string).
+- **P1 — Dashboard nativo** — referência cruzada com §3.5. Já listado lá; reforço aqui que é frente de UI.
+- **P2 — Desacoplamento do frontend** (separação de repos) — antes em §4.1, movido pra cá. Detalhes em §4.1 (que continua com as sub-decisões pendentes; o "se" vira "quando").
+- **P3 — Repensar visual do Console**. Hoje shadcn/ui + Tailwind dark, funcional mas genérico. Quando virar prioridade, vale prototipar primeiro em ferramenta visual (ver bullet abaixo). Sem urgência.
+- **Ferramenta auxiliar (não-onda) — Claude Design** (Anthropic Labs research preview, abril/2026). Espaço de colaboração com Claude pra criar artefatos visuais polidos: mockups da próxima fase de UI, decks de pitch da arquitetura pra stakeholders, one-pagers, diagramas. **Não entra no código do gateway** — é tool no toolbelt do owner pra produzir artefatos antes (ou em paralelo) à implementação. Quando for desenhar uma tela nova (Models, Dashboard), prototipar lá primeiro pode acelerar e reduzir retrabalho em React. Link: https://www.anthropic.com/news/claude-design-anthropic-labs.
 
 ---
 
@@ -245,9 +306,14 @@ Ondas entregues indexadas pelos ADRs que decidiram cada uma.
 | 3 | Azure Key Vault como provider de segredos | ADR-0018 | ✅ |
 | 4 | Azure AI Language PII | ADR-0019 | ✅ |
 | 5 | UI: form Azure + playground canônico + catálogo + alert/dialog | (sem ADR — UI) | ✅ |
-| 6 | Latency breakdown observável | ADR-0021 | ✅ código; ⏳ validação |
-| 7 | Troca emergencial PostgreSQL → SQL Server (schema gogateway) | ADR-0022 | ✅ código; ⏳ smoke test contra BRSPVPDEV003 |
-| 4.5 | Target credentials no Key Vault | ADR-0020 a fazer | ⏳ planejada |
+| 6 | Latency breakdown observável | ADR-0021 | ✅ código; ⏳ validação ao vivo (interrompida pela Onda 7) |
+| 7 | Troca emergencial PostgreSQL → SQL Server (schema gogateway) | ADR-0022 | ✅ **accepted** (smoke test passou 2026-05-27) |
+| 4.5 | Target credentials no Key Vault | ADR-0020 a fazer | ⏳ planejada (desbloqueada após Onda 7) |
+| 8 | Streaming de áudio bidirecional via Azure Voice Live | ADR-0023 a fazer | ⏳ **próxima P1** — spike técnico antes do design |
+| (sem nº) | SSO Entra ID / OIDC | ADR-0024 a fazer | ⏳ planejada (depende de App Registration no Entra) |
+| (sem nº) | Modelos como CRUD + Page Models | ADR-0025 a fazer? | ⏳ planejada |
+| (sem nº) | Segregação hot/warm path | (avaliar) | ⏳ adiar até hot path sangrar |
+| (sem nº) | Mensageria (Service Bus / Redis) | ADR-0026 a fazer | ⏳ adiar até critério bater (§3.7) |
 
 **Notas sobre a Onda 7 (troca de banco)**:
 - Trigger: requisito de infra corporativa em homologação (SQL Server gerenciado pela TI, sem espaço pra Postgres alternativo).
@@ -255,6 +321,14 @@ Ondas entregues indexadas pelos ADRs que decidiram cada uma.
 - Migrations PG legacy preservadas em `migrations/postgres-legacy/` (referência histórica, não rodam).
 - Schema dedicado `gogateway` qualificado em toda query (defesa em profundidade — o banco corporativo é compartilhado).
 - Senha do user de serviço vive exclusivamente no Key Vault (`AzureAIGateway-DB-Password-hom`).
-- Suite verde (vet/build/test-race) ao fim do código; smoke test ao vivo é o último passo pra fechar a Onda.
+- Suite verde (vet/build/test-race) ao fim do código; smoke test passou em 2026-05-27 contra BRSPVPDEV003. ADR-0022 marcado `accepted`.
+- Fixes capturados durante o smoke: migration 005 (deferred name resolution via EXEC), KV resolver (envolver valores em single quotes pra suportar `!@#`), driver mssqldb (provider_config como string pra evitar VARBINARY coercion). Doc no commit relevante.
+
+**Notas sobre a Onda 8 (streaming áudio Voice Live, próxima P1)**:
+- Trigger: owner tem subscription Voice Live e quer usar como provider via gateway.
+- Latência é problema número 1. Decisões serão de "menos pior" (owner explícito).
+- Spike técnico (sem gateway) antes do design pra estabelecer baseline.
+- Schema novo `gogateway.audio_sessions` (não usa o `usage_events` clássico).
+- ADR-0023 cobre: transporte (WebSocket passthrough), codec (passthrough binário), auth (bearer no upgrade), CS (delegado ao Voice Live + audit), tier policy, cancelation, schema.
 
 ADRs livres a partir de **0023**.
