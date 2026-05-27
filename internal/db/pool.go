@@ -1,50 +1,101 @@
-// Package db provides PostgreSQL connection pool setup and migration running
-// for the AI Gateway.
+// Package db provides SQL Server connection setup and migration running for
+// the AI Gateway (ADR-0022).
 //
 // References:
 //   - SPEC.md §16 steps 4–5 — bootstrap: pool + migrations
-//   - https://pkg.go.dev/github.com/jackc/pgx/v5/pgxpool
+//   - ADR-0022 — troca PostgreSQL → SQL Server
+//   - https://github.com/microsoft/go-mssqldb
 package db
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	// Registers the "sqlserver" driver with database/sql.
+	_ "github.com/microsoft/go-mssqldb"
+
+	"github.com/D4nRossi/ai-gateway/internal/config"
 )
 
-// NewPool creates and validates a pgxpool connection pool using the given
-// database URL and connection count settings.
-//
-// The pool is validated with a Ping before returning; any connectivity failure
-// is surfaced immediately so the gateway can exit on boot rather than at
-// first request.
+// NewMSSQL opens a SQL Server connection using database/sql and the
+// microsoft/go-mssqldb driver. The connection is validated with a Ping before
+// returning so the gateway exits at boot rather than at first request if the
+// database is unreachable.
 //
 // References:
 //   - SPEC.md §16 step 4
-//   - https://pkg.go.dev/github.com/jackc/pgx/v5/pgxpool
-func NewPool(ctx context.Context, url string, maxConns, minConns int) (*pgxpool.Pool, error) {
-	cfg, err := pgxpool.ParseConfig(url)
+//   - ADR-0022 — driver e config estruturado
+//   - https://pkg.go.dev/github.com/microsoft/go-mssqldb
+func NewMSSQL(ctx context.Context, cfg config.DatabaseConfig) (*sql.DB, error) {
+	connStr := ConnString(cfg)
+
+	dbHandle, err := sql.Open("sqlserver", connStr)
 	if err != nil {
-		return nil, fmt.Errorf("parsing database URL: %w", err)
+		return nil, fmt.Errorf("opening sqlserver connection: %w", err)
 	}
 
-	if maxConns > 0 {
-		cfg.MaxConns = int32(maxConns)
+	// SetMaxOpenConns caps the total connections (active + idle).
+	// SetMaxIdleConns caps the idle pool — there is no hard minimum on
+	// database/sql, so MinConns from config becomes "max idle" here (closest
+	// equivalent to pgxpool's MinConns).
+	if cfg.MaxConns > 0 {
+		dbHandle.SetMaxOpenConns(cfg.MaxConns)
 	}
-	if minConns > 0 {
-		cfg.MinConns = int32(minConns)
-	}
-
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("creating postgres pool: %w", err)
-	}
-
-	if err := pool.Ping(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("pinging postgres: %w", err)
+	if cfg.MinConns > 0 {
+		dbHandle.SetMaxIdleConns(cfg.MinConns)
 	}
 
-	return pool, nil
+	if err := dbHandle.PingContext(ctx); err != nil {
+		_ = dbHandle.Close()
+		return nil, fmt.Errorf("pinging sqlserver at %s:%d: %w", cfg.Host, effectivePort(cfg), err)
+	}
+
+	return dbHandle, nil
+}
+
+// ConnString builds the sqlserver:// URL the driver expects.
+//
+// Reasoning: assembling via net/url ensures the password (which can contain
+// '@', ':', '/' coming from Key Vault) is properly percent-encoded. Manual
+// string concatenation here would be a sharp edge.
+//
+// SECURITY: the returned string contains the database password — never log it.
+//
+// References:
+//   - https://github.com/microsoft/go-mssqldb#connection-parameters-and-dsn
+func ConnString(cfg config.DatabaseConfig) string {
+	q := url.Values{}
+	q.Set("database", cfg.Database)
+	// Application name shows up in SQL Server traces (sys.dm_exec_sessions)
+	// — useful for the DBA to identify gateway traffic.
+	q.Set("app name", "ai-gateway")
+	if cfg.Encrypt {
+		q.Set("encrypt", "true")
+	} else {
+		q.Set("encrypt", "disable")
+	}
+	if cfg.TrustServerCertificate {
+		q.Set("TrustServerCertificate", "true")
+	}
+
+	u := &url.URL{
+		Scheme:   "sqlserver",
+		User:     url.UserPassword(cfg.User, cfg.Password),
+		Host:     net.JoinHostPort(cfg.Host, strconv.Itoa(effectivePort(cfg))),
+		RawQuery: q.Encode(),
+	}
+	return u.String()
+}
+
+// effectivePort returns cfg.Port when explicitly set, otherwise the SQL Server
+// default 1433.
+func effectivePort(cfg config.DatabaseConfig) int {
+	if cfg.Port > 0 {
+		return cfg.Port
+	}
+	return 1433
 }

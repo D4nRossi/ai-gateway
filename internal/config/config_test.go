@@ -16,7 +16,14 @@ func baseValidConfig() Config {
 			APIVersion: "2024-10-21",
 		},
 		Database: DatabaseConfig{
-			URL:              "postgres://u:p@localhost/db",
+			Driver:           "sqlserver",
+			Host:             "BRSPVPDEV003",
+			Port:             1433,
+			Database:         "AzureAI_Gateway_hom",
+			User:             "usr_sist_AzureAI_Gateway_hom",
+			Password:         "dummy-test-password",
+			Schema:           "gogateway",
+			Encrypt:          true,
 			EncryptionKeyHex: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		},
 		Models: []ModelConfig{

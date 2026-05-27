@@ -1,13 +1,11 @@
-package postgres
+package mssql
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/D4nRossi/ai-gateway/internal/domain/endpoint"
 	"github.com/D4nRossi/ai-gateway/internal/infra/crypto"
@@ -16,17 +14,17 @@ import (
 // Compile-time assertion: EndpointRepo must satisfy endpoint.Repository.
 var _ endpoint.Repository = (*EndpointRepo)(nil)
 
-// EndpointRepo is the pgx implementation of endpoint.Repository.
+// EndpointRepo is the SQL Server implementation of endpoint.Repository.
 // It depends on an Encrypter to encrypt and decrypt TargetAuth credentials
 // stored in proxy_targets.auth_config_enc (ADR-0012).
 type EndpointRepo struct {
-	pool      *pgxpool.Pool
+	db        *sql.DB
 	encrypter crypto.Encrypter
 }
 
-// NewEndpointRepo constructs an EndpointRepo backed by the given pool and encrypter.
-func NewEndpointRepo(pool *pgxpool.Pool, enc crypto.Encrypter) *EndpointRepo {
-	return &EndpointRepo{pool: pool, encrypter: enc}
+// NewEndpointRepo constructs an EndpointRepo backed by the given handle and encrypter.
+func NewEndpointRepo(db *sql.DB, enc crypto.Encrypter) *EndpointRepo {
+	return &EndpointRepo{db: db, encrypter: enc}
 }
 
 // Create inserts a new ProxyEndpoint (without targets) and returns it with ID set.
@@ -37,11 +35,12 @@ func (r *EndpointRepo) Create(ctx context.Context, ep endpoint.ProxyEndpoint) (e
 	}
 
 	const q = `
-		INSERT INTO proxy_endpoints (slug, name, provider_kind, provider_config, lb_strategy, max_rps, max_monthly_requests, active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, created_at, updated_at`
+		INSERT INTO gogateway.proxy_endpoints
+		    (slug, name, provider_kind, provider_config, lb_strategy, max_rps, max_monthly_requests, active)
+		OUTPUT INSERTED.id, INSERTED.created_at, INSERTED.updated_at
+		VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8)`
 
-	row := r.pool.QueryRow(ctx, q,
+	row := r.db.QueryRowContext(ctx, q,
 		ep.Slug, ep.Name, string(ep.ProviderKind), pcJSON, string(ep.LBStrategy),
 		ep.MaxRPS, ep.MaxMonthlyRequests, ep.Active,
 	)
@@ -55,12 +54,12 @@ func (r *EndpointRepo) Create(ctx context.Context, ep endpoint.ProxyEndpoint) (e
 func (r *EndpointRepo) Get(ctx context.Context, id int64) (endpoint.ProxyEndpoint, error) {
 	const q = `
 		SELECT id, slug, name, provider_kind, provider_config, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
-		FROM proxy_endpoints WHERE id = $1`
+		FROM gogateway.proxy_endpoints WHERE id = @p1`
 
-	row := r.pool.QueryRow(ctx, q, id)
-	ep, err := scanEndpoint(row)
+	row := r.db.QueryRowContext(ctx, q, id)
+	ep, err := scanEndpointRow(row)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return endpoint.ProxyEndpoint{}, fmt.Errorf("proxy endpoint id=%d: %w", id, endpoint.ErrNotFound)
 		}
 		return endpoint.ProxyEndpoint{}, fmt.Errorf("getting proxy endpoint id=%d: %w", id, err)
@@ -77,12 +76,12 @@ func (r *EndpointRepo) Get(ctx context.Context, id int64) (endpoint.ProxyEndpoin
 func (r *EndpointRepo) GetBySlug(ctx context.Context, slug string) (endpoint.ProxyEndpoint, error) {
 	const q = `
 		SELECT id, slug, name, provider_kind, provider_config, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
-		FROM proxy_endpoints WHERE slug = $1 AND active = true`
+		FROM gogateway.proxy_endpoints WHERE slug = @p1 AND active = 1`
 
-	row := r.pool.QueryRow(ctx, q, slug)
-	ep, err := scanEndpoint(row)
+	row := r.db.QueryRowContext(ctx, q, slug)
+	ep, err := scanEndpointRow(row)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return endpoint.ProxyEndpoint{}, fmt.Errorf("proxy endpoint %q: %w", slug, endpoint.ErrNotFound)
 		}
 		return endpoint.ProxyEndpoint{}, fmt.Errorf("getting proxy endpoint %q: %w", slug, err)
@@ -99,9 +98,9 @@ func (r *EndpointRepo) GetBySlug(ctx context.Context, slug string) (endpoint.Pro
 func (r *EndpointRepo) List(ctx context.Context) ([]endpoint.ProxyEndpoint, error) {
 	const q = `
 		SELECT id, slug, name, provider_kind, provider_config, lb_strategy, max_rps, max_monthly_requests, active, created_at, updated_at
-		FROM proxy_endpoints ORDER BY slug`
+		FROM gogateway.proxy_endpoints ORDER BY slug`
 
-	rows, err := r.pool.Query(ctx, q)
+	rows, err := r.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("listing proxy endpoints: %w", err)
 	}
@@ -129,18 +128,18 @@ func (r *EndpointRepo) Update(ctx context.Context, ep endpoint.ProxyEndpoint) (e
 	}
 
 	const q = `
-		UPDATE proxy_endpoints
-		SET slug = $1, name = $2, provider_kind = $3, provider_config = $4, lb_strategy = $5, max_rps = $6,
-		    max_monthly_requests = $7, active = $8, updated_at = NOW()
-		WHERE id = $9
-		RETURNING updated_at`
+		UPDATE gogateway.proxy_endpoints
+		SET slug = @p1, name = @p2, provider_kind = @p3, provider_config = @p4, lb_strategy = @p5, max_rps = @p6,
+		    max_monthly_requests = @p7, active = @p8, updated_at = SYSUTCDATETIME()
+		OUTPUT INSERTED.updated_at
+		WHERE id = @p9`
 
-	row := r.pool.QueryRow(ctx, q,
+	row := r.db.QueryRowContext(ctx, q,
 		ep.Slug, ep.Name, string(ep.ProviderKind), pcJSON, string(ep.LBStrategy),
 		ep.MaxRPS, ep.MaxMonthlyRequests, ep.Active, ep.ID,
 	)
 	if err := row.Scan(&ep.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return endpoint.ProxyEndpoint{}, fmt.Errorf("proxy endpoint id=%d: %w", ep.ID, endpoint.ErrNotFound)
 		}
 		return endpoint.ProxyEndpoint{}, fmt.Errorf("updating proxy endpoint id=%d: %w", ep.ID, err)
@@ -148,15 +147,19 @@ func (r *EndpointRepo) Update(ctx context.Context, ep endpoint.ProxyEndpoint) (e
 	return ep, nil
 }
 
-// Delete soft-deletes a ProxyEndpoint by setting active=false.
+// Delete soft-deletes a ProxyEndpoint by setting active=0.
 func (r *EndpointRepo) Delete(ctx context.Context, id int64) error {
-	const q = `UPDATE proxy_endpoints SET active = false, updated_at = NOW() WHERE id = $1`
+	const q = `UPDATE gogateway.proxy_endpoints SET active = 0, updated_at = SYSUTCDATETIME() WHERE id = @p1`
 
-	tag, err := r.pool.Exec(ctx, q, id)
+	result, err := r.db.ExecContext(ctx, q, id)
 	if err != nil {
 		return fmt.Errorf("deleting proxy endpoint id=%d: %w", id, err)
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected for endpoint id=%d: %w", id, err)
+	}
+	if n == 0 {
 		return fmt.Errorf("proxy endpoint id=%d: %w", id, endpoint.ErrNotFound)
 	}
 	return nil
@@ -170,11 +173,11 @@ func (r *EndpointRepo) AddTarget(ctx context.Context, t endpoint.Target) (endpoi
 	}
 
 	const q = `
-		INSERT INTO proxy_targets (endpoint_id, url, weight, auth_type, auth_config_enc, active)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, created_at`
+		INSERT INTO gogateway.proxy_targets (endpoint_id, url, weight, auth_type, auth_config_enc, active)
+		OUTPUT INSERTED.id, INSERTED.created_at
+		VALUES (@p1, @p2, @p3, @p4, @p5, @p6)`
 
-	row := r.pool.QueryRow(ctx, q,
+	row := r.db.QueryRowContext(ctx, q,
 		t.EndpointID, t.URL, t.Weight, string(t.Auth.Type), enc, t.Active,
 	)
 	if err := row.Scan(&t.ID, &t.CreatedAt); err != nil {
@@ -192,42 +195,55 @@ func (r *EndpointRepo) UpdateTarget(ctx context.Context, t endpoint.Target) (end
 	}
 
 	const q = `
-		UPDATE proxy_targets
-		SET url = $1, weight = $2, auth_type = $3, auth_config_enc = $4, active = $5
-		WHERE id = $6`
+		UPDATE gogateway.proxy_targets
+		SET url = @p1, weight = @p2, auth_type = @p3, auth_config_enc = @p4, active = @p5
+		WHERE id = @p6`
 
-	tag, err := r.pool.Exec(ctx, q, t.URL, t.Weight, string(t.Auth.Type), enc, t.Active, t.ID)
+	result, err := r.db.ExecContext(ctx, q, t.URL, t.Weight, string(t.Auth.Type), enc, t.Active, t.ID)
 	if err != nil {
 		return endpoint.Target{}, fmt.Errorf("updating proxy target id=%d: %w", t.ID, err)
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := result.RowsAffected()
+	if err != nil {
+		return endpoint.Target{}, fmt.Errorf("checking rows affected for target id=%d: %w", t.ID, err)
+	}
+	if n == 0 {
 		return endpoint.Target{}, fmt.Errorf("proxy target id=%d: %w", t.ID, endpoint.ErrNotFound)
 	}
 	return t, nil
 }
 
-// RemoveTarget soft-deletes a Target by setting active=false.
+// RemoveTarget soft-deletes a Target by setting active=0.
 func (r *EndpointRepo) RemoveTarget(ctx context.Context, targetID int64) error {
-	const q = `UPDATE proxy_targets SET active = false WHERE id = $1`
+	const q = `UPDATE gogateway.proxy_targets SET active = 0 WHERE id = @p1`
 
-	tag, err := r.pool.Exec(ctx, q, targetID)
+	result, err := r.db.ExecContext(ctx, q, targetID)
 	if err != nil {
 		return fmt.Errorf("removing proxy target id=%d: %w", targetID, err)
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected for target id=%d: %w", targetID, err)
+	}
+	if n == 0 {
 		return fmt.Errorf("proxy target id=%d: %w", targetID, endpoint.ErrNotFound)
 	}
 	return nil
 }
 
-// Grant inserts an application_endpoint_grants row. Idempotent (ON CONFLICT DO NOTHING).
+// Grant inserts an application_endpoint_grants row. Idempotent: the
+// IF NOT EXISTS wrapper makes it safe to call when the grant already
+// exists (equivalent to PG's ON CONFLICT DO NOTHING).
 func (r *EndpointRepo) Grant(ctx context.Context, applicationID, endpointID int64) error {
 	const q = `
-		INSERT INTO application_endpoint_grants (application_id, endpoint_id)
-		VALUES ($1, $2)
-		ON CONFLICT DO NOTHING`
+		IF NOT EXISTS (
+		    SELECT 1 FROM gogateway.application_endpoint_grants
+		    WHERE application_id = @p1 AND endpoint_id = @p2
+		)
+		INSERT INTO gogateway.application_endpoint_grants (application_id, endpoint_id)
+		VALUES (@p1, @p2)`
 
-	if _, err := r.pool.Exec(ctx, q, applicationID, endpointID); err != nil {
+	if _, err := r.db.ExecContext(ctx, q, applicationID, endpointID); err != nil {
 		return fmt.Errorf("granting app id=%d to endpoint id=%d: %w", applicationID, endpointID, err)
 	}
 	return nil
@@ -236,10 +252,10 @@ func (r *EndpointRepo) Grant(ctx context.Context, applicationID, endpointID int6
 // Revoke removes an application_endpoint_grants row.
 func (r *EndpointRepo) Revoke(ctx context.Context, applicationID, endpointID int64) error {
 	const q = `
-		DELETE FROM application_endpoint_grants
-		WHERE application_id = $1 AND endpoint_id = $2`
+		DELETE FROM gogateway.application_endpoint_grants
+		WHERE application_id = @p1 AND endpoint_id = @p2`
 
-	if _, err := r.pool.Exec(ctx, q, applicationID, endpointID); err != nil {
+	if _, err := r.db.ExecContext(ctx, q, applicationID, endpointID); err != nil {
 		return fmt.Errorf("revoking app id=%d from endpoint id=%d: %w", applicationID, endpointID, err)
 	}
 	return nil
@@ -248,13 +264,13 @@ func (r *EndpointRepo) Revoke(ctx context.Context, applicationID, endpointID int
 // HasGrant reports whether the application has been granted access to the endpoint.
 func (r *EndpointRepo) HasGrant(ctx context.Context, applicationID, endpointID int64) (bool, error) {
 	const q = `
-		SELECT 1 FROM application_endpoint_grants
-		WHERE application_id = $1 AND endpoint_id = $2`
+		SELECT 1 FROM gogateway.application_endpoint_grants
+		WHERE application_id = @p1 AND endpoint_id = @p2`
 
-	row := r.pool.QueryRow(ctx, q, applicationID, endpointID)
+	row := r.db.QueryRowContext(ctx, q, applicationID, endpointID)
 	var one int
 	err := row.Scan(&one)
-	if errors.Is(err, pgx.ErrNoRows) {
+	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
@@ -265,9 +281,9 @@ func (r *EndpointRepo) HasGrant(ctx context.Context, applicationID, endpointID i
 
 // ListGrantedApplicationIDs returns all application IDs granted access to an endpoint.
 func (r *EndpointRepo) ListGrantedApplicationIDs(ctx context.Context, endpointID int64) ([]int64, error) {
-	const q = `SELECT application_id FROM application_endpoint_grants WHERE endpoint_id = $1`
+	const q = `SELECT application_id FROM gogateway.application_endpoint_grants WHERE endpoint_id = @p1`
 
-	rows, err := r.pool.Query(ctx, q, endpointID)
+	rows, err := r.db.QueryContext(ctx, q, endpointID)
 	if err != nil {
 		return nil, fmt.Errorf("listing grants for endpoint id=%d: %w", endpointID, err)
 	}
@@ -289,9 +305,9 @@ func (r *EndpointRepo) ListGrantedApplicationIDs(ctx context.Context, endpointID
 
 // ListGrantedEndpointIDs returns all endpoint IDs an application has been granted.
 func (r *EndpointRepo) ListGrantedEndpointIDs(ctx context.Context, applicationID int64) ([]int64, error) {
-	const q = `SELECT endpoint_id FROM application_endpoint_grants WHERE application_id = $1`
+	const q = `SELECT endpoint_id FROM gogateway.application_endpoint_grants WHERE application_id = @p1`
 
-	rows, err := r.pool.Query(ctx, q, applicationID)
+	rows, err := r.db.QueryContext(ctx, q, applicationID)
 	if err != nil {
 		return nil, fmt.Errorf("listing grants for app id=%d: %w", applicationID, err)
 	}
@@ -316,11 +332,11 @@ func (r *EndpointRepo) ListGrantedEndpointIDs(ctx context.Context, applicationID
 func (r *EndpointRepo) loadTargets(ctx context.Context, endpointID int64) ([]endpoint.Target, error) {
 	const q = `
 		SELECT id, endpoint_id, url, weight, auth_type, auth_config_enc, active, created_at
-		FROM proxy_targets
-		WHERE endpoint_id = $1 AND active = true
+		FROM gogateway.proxy_targets
+		WHERE endpoint_id = @p1 AND active = 1
 		ORDER BY id`
 
-	rows, err := r.pool.Query(ctx, q, endpointID)
+	rows, err := r.db.QueryContext(ctx, q, endpointID)
 	if err != nil {
 		return nil, fmt.Errorf("loading targets for endpoint id=%d: %w", endpointID, err)
 	}
@@ -385,11 +401,15 @@ func (r *EndpointRepo) decryptAuth(authType endpoint.AuthType, authEnc []byte) (
 	return auth, nil
 }
 
-func scanEndpoint(row pgx.Row) (endpoint.ProxyEndpoint, error) {
+// ── scan helpers ─────────────────────────────────────────────────────────────
+
+func scanEndpoint(s rowScanner) (endpoint.ProxyEndpoint, error) {
 	var ep endpoint.ProxyEndpoint
 	var lbs, pk string
+	// provider_config é NVARCHAR(MAX) JSON; scan como []byte preserva o pipe
+	// "armazenado-como-bytes" do helper unmarshalProviderConfig.
 	var pcRaw []byte
-	err := row.Scan(
+	err := s.Scan(
 		&ep.ID, &ep.Slug, &ep.Name, &pk, &pcRaw, &lbs,
 		&ep.MaxRPS, &ep.MaxMonthlyRequests, &ep.Active,
 		&ep.CreatedAt, &ep.UpdatedAt,
@@ -406,30 +426,17 @@ func scanEndpoint(row pgx.Row) (endpoint.ProxyEndpoint, error) {
 	return ep, nil
 }
 
-func scanEndpointFromRows(rows pgx.Rows) (endpoint.ProxyEndpoint, error) {
-	var ep endpoint.ProxyEndpoint
-	var lbs, pk string
-	var pcRaw []byte
-	err := rows.Scan(
-		&ep.ID, &ep.Slug, &ep.Name, &pk, &pcRaw, &lbs,
-		&ep.MaxRPS, &ep.MaxMonthlyRequests, &ep.Active,
-		&ep.CreatedAt, &ep.UpdatedAt,
-	)
-	if err != nil {
-		return endpoint.ProxyEndpoint{}, err
-	}
-	ep.LBStrategy = endpoint.LBStrategy(lbs)
-	ep.ProviderKind = endpoint.ProviderKind(pk)
-	ep.ProviderConfig, err = unmarshalProviderConfig(pcRaw)
-	if err != nil {
-		return endpoint.ProxyEndpoint{}, fmt.Errorf("unmarshalling provider_config: %w", err)
-	}
-	return ep, nil
+func scanEndpointRow(row *sql.Row) (endpoint.ProxyEndpoint, error) {
+	return scanEndpoint(row)
 }
 
-// marshalProviderConfig serializes a ProviderConfig to the bytes pgx writes to a
-// JSONB column. A nil/empty map becomes `{}` so the DB never sees `null` for a
-// NOT NULL column.
+func scanEndpointFromRows(rows *sql.Rows) (endpoint.ProxyEndpoint, error) {
+	return scanEndpoint(rows)
+}
+
+// marshalProviderConfig serializes a ProviderConfig to bytes. A nil/empty map
+// becomes `{}` so the DB never sees null on a NOT NULL NVARCHAR(MAX) column
+// guarded by ISJSON CHECK.
 func marshalProviderConfig(pc endpoint.ProviderConfig) ([]byte, error) {
 	if len(pc) == 0 {
 		return []byte("{}"), nil
@@ -441,8 +448,8 @@ func marshalProviderConfig(pc endpoint.ProviderConfig) ([]byte, error) {
 	return b, nil
 }
 
-// unmarshalProviderConfig parses JSONB bytes into a ProviderConfig.
-// Empty input or "{}" yields a non-nil empty map (callers can read freely).
+// unmarshalProviderConfig parses NVARCHAR(MAX) JSON bytes into a ProviderConfig.
+// Empty input or "{}" yields a non-nil empty map.
 func unmarshalProviderConfig(raw []byte) (endpoint.ProviderConfig, error) {
 	pc := endpoint.ProviderConfig{}
 	if len(raw) == 0 {

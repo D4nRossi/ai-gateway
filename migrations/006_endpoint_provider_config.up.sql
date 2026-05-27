@@ -1,19 +1,14 @@
--- 006_endpoint_provider_config.up.sql
+-- 006_endpoint_provider_config.up.sql (T-SQL)
 --
--- ADR-0017: ativa path translation por provider_kind. Endpoints precisam de
--- config específica por kind (api_version + model_to_deployment no caso Azure
--- OpenAI). Usamos JSONB para que cada provider possa carregar seu próprio
--- shape sem migration nova a cada um.
---
--- Validação semântica (campos obrigatórios por kind) vive em adminservice —
--- o DB só garante que é JSON válido. Default '{}' preserva linhas existentes;
--- endpoints Azure cadastrados antes desta migration ficam "misconfigured" até
--- serem editados via UI/API e preencherem o shape esperado.
+-- Portado de migrations/postgres-legacy/006_endpoint_provider_config.up.sql (ADR-0017).
+-- Adiciona provider_config NVARCHAR(MAX) (era JSONB no PG). Default '{}'
+-- preserva linhas existentes; validação semântica por provider_kind vive em
+-- adminservice (não no DB).
 
-ALTER TABLE proxy_endpoints
-    ADD COLUMN provider_config JSONB NOT NULL DEFAULT '{}';
-
-COMMENT ON COLUMN proxy_endpoints.provider_config IS
-    'ADR-0017: configuração específica por provider_kind. '
-    'Azure OpenAI: { "api_version": "...", "model_to_deployment": { "model": "deployment" } }. '
-    'custom: ignorado (passthrough). Validação por kind em internal/app/adminservice.';
+IF COL_LENGTH('gogateway.proxy_endpoints', 'provider_config') IS NULL
+BEGIN
+    ALTER TABLE gogateway.proxy_endpoints
+        ADD provider_config NVARCHAR(MAX) NOT NULL
+                CONSTRAINT df_proxy_endpoints_provider_config DEFAULT N'{}'
+                CONSTRAINT ck_proxy_endpoints_provider_config CHECK (ISJSON(provider_config) = 1);
+END;

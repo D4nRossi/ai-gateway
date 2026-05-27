@@ -2,20 +2,20 @@ package usage
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Writer persists UsageEvents to the usage_events table asynchronously.
+// Writer persists UsageEvents to the gogateway.usage_events table asynchronously.
 // Events are queued to a buffered channel; a background goroutine drains it.
 //
 // References:
 //   - SPEC.md §9.1 steps 11–12 — async emit
 //   - ADR-0005 — async channel (buffer 10000) vs. synchronous write
+//   - ADR-0022 — SQL Server (substitui pgxpool/PostgreSQL legacy)
 type Writer struct {
 	ch     chan UsageEvent
-	pool   *pgxpool.Pool
+	db     *sql.DB
 	logger *slog.Logger
 }
 
@@ -27,10 +27,10 @@ const channelBuf = 10_000
 // NewWriter creates a Writer and starts the background drain goroutine.
 // ctx controls the goroutine lifetime; closing ctx causes the worker to drain
 // and exit after the current insert completes.
-func NewWriter(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) *Writer {
+func NewWriter(ctx context.Context, db *sql.DB, logger *slog.Logger) *Writer {
 	w := &Writer{
 		ch:     make(chan UsageEvent, channelBuf),
-		pool:   pool,
+		db:     db,
 		logger: logger,
 	}
 	go w.run(ctx)
@@ -75,12 +75,12 @@ func (w *Writer) run(ctx context.Context) {
 }
 
 const insertSQL = `
-INSERT INTO usage_events (
+INSERT INTO gogateway.usage_events (
 	request_id, application_name, tier, model, provider,
 	input_tokens, output_tokens, total_tokens,
 	latency_ms, status_code, estimated_cost_brl, created_at,
 	lat_auth_ms, lat_mask_ms, lat_guardrails_ms, lat_provider_ms, lat_encode_ms
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
+) VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10, @p11, @p12, @p13, @p14, @p15, @p16, @p17)`
 
 // nullIfZero turns a 0 latency bucket into nil so the DB stores NULL.
 // Reasoning: 0 in the struct can mean either "instrumented but sub-ms" or
@@ -101,7 +101,7 @@ func (w *Writer) insert(e UsageEvent) {
 			e.LatAuthMs, e.LatMaskMs, e.LatGuardrailsMs, e.LatProviderMs, e.LatEncodeMs
 	}
 
-	_, err := w.pool.Exec(
+	_, err := w.db.ExecContext(
 		context.Background(),
 		insertSQL,
 		e.RequestID, e.ApplicationName, e.Tier, e.Model, e.Provider,

@@ -1,14 +1,15 @@
-// Command admin-create inserts the first admin user into the admin_users table.
+// Command admin-create inserts the first admin user into the
+// gogateway.admin_users table on SQL Server (ADR-0022).
 //
 // Usage:
 //
-//	# senha lida interativamente (ecos desligado — seguro para histórico do shell)
+//	# senha lida interativamente (eco desligado — seguro para histórico do shell)
 //	go run ./cmd/admin-create -username daniel -role admin
 //
 //	# senha via stdin (útil em scripts):
 //	echo "minhaSenha" | go run ./cmd/admin-create -username daniel -role admin -stdin
 //
-//	# DATABASE_URL precisa estar no ambiente (mesmo formato do gateway).
+//	# DATABASE_URL precisa estar no ambiente — formato sqlserver://user:pass@host?database=DB&encrypt=true
 //
 // Reasoning: o gateway intencionalmente não popula nenhum admin no migration —
 // cada deploy escolhe sua própria credencial inicial. Esta CLI é o caminho
@@ -23,24 +24,33 @@
 //
 // References:
 //   - ADR-0011 — admin auth via bcrypt
+//   - ADR-0022 — troca PG → SQL Server
 //   - SPEC.md §15 — bootstrap and first-user provisioning
 package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
+	mssql "github.com/microsoft/go-mssqldb"
 	"golang.org/x/crypto/bcrypt"
 	"golang.org/x/term"
 )
 
-const bcryptCost = 12
+const (
+	bcryptCost = 12
+
+	// errDuplicateKey is the SQL Server error number for PRIMARY KEY / UNIQUE
+	// violations (analogous to PG SQLSTATE 23505). Matches mssql.ErrNumberDuplicateKey
+	// in internal/infra/mssql/errors.go — copied here so admin-create stays
+	// importable without the infra package.
+	errDuplicateKey int32 = 2627
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -65,7 +75,7 @@ func run() error {
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		return errors.New("DATABASE_URL environment variable is required")
+		return errors.New("DATABASE_URL environment variable is required (e.g. sqlserver://user:pass@host?database=AzureAI_Gateway_hom)")
 	}
 
 	password, err := readPassword(*stdin)
@@ -82,22 +92,26 @@ func run() error {
 	}
 
 	ctx := context.Background()
-	conn, err := pgx.Connect(ctx, dbURL)
+	conn, err := sql.Open("sqlserver", dbURL)
 	if err != nil {
+		return fmt.Errorf("opening sqlserver connection: %w", err)
+	}
+	defer conn.Close()
+
+	if err := conn.PingContext(ctx); err != nil {
 		return fmt.Errorf("connecting to database: %w", err)
 	}
-	defer conn.Close(ctx)
 
 	const q = `
-		INSERT INTO admin_users (username, password_hash, role, active)
-		VALUES ($1, $2, $3, true)
-		RETURNING id`
+		INSERT INTO gogateway.admin_users (username, password_hash, role, active)
+		OUTPUT INSERTED.id
+		VALUES (@p1, @p2, @p3, 1)`
 
 	var id int64
-	row := conn.QueryRow(ctx, q, *username, string(hash), *role)
+	row := conn.QueryRowContext(ctx, q, *username, string(hash), *role)
 	if err := row.Scan(&id); err != nil {
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+		var mssqlErr mssql.Error
+		if errors.As(err, &mssqlErr) && mssqlErr.Number == errDuplicateKey {
 			return fmt.Errorf("username %q already exists", *username)
 		}
 		return fmt.Errorf("inserting admin user: %w", err)

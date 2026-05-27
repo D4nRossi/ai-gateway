@@ -2,32 +2,31 @@ package audit
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"log/slog"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Writer persists AuditEvents to the audit_events table asynchronously.
+// Writer persists AuditEvents to the gogateway.audit_events table asynchronously.
 //
 // References:
 //   - SPEC.md §5.4
 //   - ADR-0005 — async channel design
+//   - ADR-0022 — SQL Server (substitui pgxpool/PostgreSQL legacy)
 type Writer struct {
 	ch     chan AuditEvent
-	pool   *pgxpool.Pool
+	db     *sql.DB
 	logger *slog.Logger
 }
 
-// auditChannelBuf mirrors the buffer size rationale in usage.Writer.
-// See ADR-0005.
+// auditChannelBuf mirrors the buffer size rationale in usage.Writer. See ADR-0005.
 const auditChannelBuf = 10_000
 
 // NewWriter creates a Writer and starts the background drain goroutine.
-func NewWriter(ctx context.Context, pool *pgxpool.Pool, logger *slog.Logger) *Writer {
+func NewWriter(ctx context.Context, db *sql.DB, logger *slog.Logger) *Writer {
 	w := &Writer{
 		ch:     make(chan AuditEvent, auditChannelBuf),
-		pool:   pool,
+		db:     db,
 		logger: logger,
 	}
 	go w.run(ctx)
@@ -65,15 +64,14 @@ func (w *Writer) run(ctx context.Context) {
 }
 
 const auditInsertSQL = `
-INSERT INTO audit_events (
+INSERT INTO gogateway.audit_events (
 	request_id, application_name, event_type, severity, metadata, created_at
-) VALUES ($1, $2, $3, $4, $5, $6)`
+) VALUES (@p1, @p2, @p3, @p4, @p5, @p6)`
 
 func (w *Writer) insert(e AuditEvent) {
-	var metaJSON []byte
+	var metaJSON any
 	if e.Metadata != nil {
-		var err error
-		metaJSON, err = json.Marshal(e.Metadata)
+		b, err := json.Marshal(e.Metadata)
 		if err != nil {
 			w.logger.Error("marshalling audit metadata",
 				"err", err,
@@ -81,9 +79,12 @@ func (w *Writer) insert(e AuditEvent) {
 			)
 			return
 		}
+		// Pass as string so the driver stores it in NVARCHAR(MAX) without
+		// going through VARBINARY conversion.
+		metaJSON = string(b)
 	}
 
-	_, err := w.pool.Exec(
+	_, err := w.db.ExecContext(
 		context.Background(),
 		auditInsertSQL,
 		e.RequestID, e.ApplicationName, e.EventType, e.Severity, metaJSON, e.CreatedAt,

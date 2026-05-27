@@ -48,7 +48,7 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/db"
 	"github.com/D4nRossi/ai-gateway/internal/infra/crypto"
 	"github.com/D4nRossi/ai-gateway/internal/infra/keyvault"
-	pginfra "github.com/D4nRossi/ai-gateway/internal/infra/postgres"
+	mssqlinfra "github.com/D4nRossi/ai-gateway/internal/infra/mssql"
 	"github.com/D4nRossi/ai-gateway/internal/observability"
 	"github.com/D4nRossi/ai-gateway/internal/providers"
 	"github.com/D4nRossi/ai-gateway/internal/providers/azureopenai"
@@ -118,19 +118,26 @@ func run() error {
 		"log_level", logLevel,
 	)
 
-	// ── 4. Postgres pool ──────────────────────────────────────────────────────
+	// ── 4. SQL Server connection (ADR-0022) ───────────────────────────────────
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	pool, err := db.NewPool(ctx, cfg.Database.URL, cfg.Database.MaxConns, cfg.Database.MinConns)
+	dbHandle, err := db.NewMSSQL(ctx, cfg.Database)
 	if err != nil {
-		return fmt.Errorf("connecting to postgres: %w", err)
+		return fmt.Errorf("connecting to sqlserver: %w", err)
 	}
-	defer pool.Close()
-	logger.Info("postgres pool connected")
+	defer dbHandle.Close()
+	logger.Info("sqlserver connected",
+		"host", cfg.Database.Host,
+		"database", cfg.Database.Database,
+		"schema", cfg.Database.Schema,
+	)
 
 	// ── 5. Run migrations ─────────────────────────────────────────────────────
-	if err := db.RunMigrations(cfg.Database.URL, "migrations"); err != nil {
+	// ConnString builds the sqlserver:// URL from the structured config; passing
+	// it explicitly avoids leaking the password through any logging that might
+	// inspect the raw config struct.
+	if err := db.RunMigrations(db.ConnString(cfg.Database), "migrations"); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
 	}
 	logger.Info("migrations applied")
@@ -142,15 +149,15 @@ func run() error {
 		return fmt.Errorf("initializing AES-GCM encrypter: %w", err)
 	}
 
-	adminRepo := pginfra.NewAdminRepo(pool)
-	appRepo := pginfra.NewApplicationRepo(pool)
-	endpointRepo := pginfra.NewEndpointRepo(pool, encrypter)
+	adminRepo := mssqlinfra.NewAdminRepo(dbHandle)
+	appRepo := mssqlinfra.NewApplicationRepo(dbHandle)
+	endpointRepo := mssqlinfra.NewEndpointRepo(dbHandle, encrypter)
 
 	adminSvc := adminservice.New(appRepo, endpointRepo, adminRepo, logger, 0)
 
 	adminRouter := adminapi.NewRouter(adminapi.Deps{
 		Svc:    adminSvc,
-		Pool:   pool,
+		DB:     dbHandle,
 		Logger: logger,
 	})
 	logger.Info("admin api configured")
@@ -244,14 +251,14 @@ func run() error {
 	}
 
 	// ── 10. Budget ────────────────────────────────────────────────────────────
-	budgetChecker := budget.NewChecker(pool, logger)
-	budgetCounter := budget.NewCounter(ctx, pool, logger)
+	budgetChecker := budget.NewChecker(dbHandle, logger)
+	budgetCounter := budget.NewCounter(ctx, dbHandle, logger)
 
 	// ── 11. Usage writer ──────────────────────────────────────────────────────
-	usageWriter := usage.NewWriter(ctx, pool, logger)
+	usageWriter := usage.NewWriter(ctx, dbHandle, logger)
 
 	// ── 12. Audit writer ──────────────────────────────────────────────────────
-	auditWriter := audit.NewWriter(ctx, pool, logger)
+	auditWriter := audit.NewWriter(ctx, dbHandle, logger)
 
 	// ── 13. Build router ──────────────────────────────────────────────────────
 	routerDeps := api.RouterDeps{
@@ -259,7 +266,7 @@ func run() error {
 		PolicyStore:  policyStore,
 		RateLimiter:  rateMgr,
 		AuditWriter:  auditWriter,
-		Pool:         pool,
+		DB:           dbHandle,
 		Logger:       logger,
 		AdminHandler: adminRouter,
 		ProxyAuth:    proxyAuth,

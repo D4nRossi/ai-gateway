@@ -1,48 +1,48 @@
--- 007_api_keys_partial_unique.up.sql
+-- 007_api_keys_partial_unique.up.sql (T-SQL)
 --
--- Fix: o schema original (migration 003) declarou api_keys.application_id
--- como UNIQUE, mas o adminservice.RotateAPIKey faz "mark old as rotated +
--- INSERT new" dentro de uma transação. Como UNIQUE não filtra por
--- rotated_at, o INSERT da nova chave sempre violava a constraint e a
--- rotação falhava silenciosamente com 500.
+-- Portado de migrations/postgres-legacy/007_api_keys_partial_unique.up.sql.
+-- Substitui a UNIQUE constraint sobre application_id (criada em 003) por um
+-- filtered unique index WHERE rotated_at IS NULL. Permite múltiplas linhas
+-- históricas por application_id (rotações passadas), mas garante uma única
+-- chave ATIVA por vez — exatamente o que RotateAPIKey (mark-old-then-insert-new
+-- na mesma transação) precisa.
 --
--- Solução: trocar UNIQUE total por índice UNIQUE *parcial*
--- WHERE rotated_at IS NULL. Permite múltiplas linhas com mesma
--- application_id (histórico de rotações), mas garante que só uma esteja
--- ativa por vez — exatamente o que o RotateAPIKey assumia.
---
--- Postgres parcial unique reference:
---   https://www.postgresql.org/docs/17/indexes-partial.html
---
--- Para descobrir o nome real da constraint UNIQUE (varia entre installs
--- que rodaram migration 003 em momentos diferentes), descobrimos via
--- pg_constraint e dropamos por nome.
+-- Self-healing: o DROP CONSTRAINT é resolvido por sys.key_constraints porque
+-- o nome do constraint pode variar entre instâncias se 003 foi aplicada em
+-- contextos diferentes.
 
-DO $$
-DECLARE
-    cname text;
+DECLARE @sql NVARCHAR(MAX);
+
+SELECT @sql = COALESCE(@sql + N';', N'') + N'ALTER TABLE gogateway.api_keys DROP CONSTRAINT ' + QUOTENAME(kc.name)
+  FROM sys.key_constraints kc
+  JOIN sys.indexes ix
+    ON ix.object_id = kc.parent_object_id
+   AND ix.index_id  = kc.unique_index_id
+  JOIN sys.index_columns ic
+    ON ic.object_id = ix.object_id
+   AND ic.index_id  = ix.index_id
+  JOIN sys.columns c
+    ON c.object_id = ic.object_id
+   AND c.column_id = ic.column_id
+ WHERE kc.parent_object_id = OBJECT_ID('gogateway.api_keys')
+   AND kc.type = 'UQ'
+   AND c.name = 'application_id'
+   AND ic.index_column_id = 1
+   AND NOT EXISTS (
+       SELECT 1 FROM sys.index_columns ic2
+        WHERE ic2.object_id = ix.object_id
+          AND ic2.index_id  = ix.index_id
+          AND ic2.index_column_id > 1
+   );
+IF @sql IS NOT NULL EXEC sp_executesql @sql;
+
+IF NOT EXISTS (
+    SELECT 1 FROM sys.indexes
+     WHERE name = 'idx_api_keys_active_per_app'
+       AND object_id = OBJECT_ID('gogateway.api_keys')
+)
 BEGIN
-    SELECT conname INTO cname
-    FROM pg_constraint
-    WHERE conrelid = 'api_keys'::regclass
-      AND contype  = 'u'
-      AND array_length(conkey, 1) = 1
-      AND conkey[1] = (
-          SELECT attnum FROM pg_attribute
-          WHERE attrelid = 'api_keys'::regclass AND attname = 'application_id'
-      )
-    LIMIT 1;
-
-    IF cname IS NOT NULL THEN
-        EXECUTE format('ALTER TABLE api_keys DROP CONSTRAINT %I', cname);
-    END IF;
-END $$;
-
-CREATE UNIQUE INDEX idx_api_keys_active_per_app
-    ON api_keys (application_id)
-    WHERE rotated_at IS NULL;
-
-COMMENT ON INDEX idx_api_keys_active_per_app IS
-    'Garante uma única chave ativa (rotated_at IS NULL) por aplicação. '
-    'Linhas com rotated_at preenchido são histórico e ficam fora do índice — '
-    'permite RotateAPIKey fazer mark-old + insert-new na mesma transação.';
+    CREATE UNIQUE INDEX idx_api_keys_active_per_app
+        ON gogateway.api_keys(application_id)
+        WHERE rotated_at IS NULL;
+END;

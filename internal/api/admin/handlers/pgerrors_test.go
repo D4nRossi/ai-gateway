@@ -5,29 +5,35 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	mssql "github.com/microsoft/go-mssqldb"
 )
 
+// Test names preserve the historical "PgError" prefix even after the migration
+// to SQL Server (ADR-0022) because translatePgError continues to be the public
+// helper name in this package — renaming it would force a larger blast radius
+// at every handler. Internally the helper now inspects mssql.Error numbers.
+
+// TestTranslatePgError covers the main error-translation matrix for SQL Server
+// driver errors (microsoft/go-mssqldb).
 func TestTranslatePgError(t *testing.T) {
 	tests := []struct {
-		name           string
-		err            error
-		wantOK         bool
-		wantStatus     int
-		wantCode       string
-		wantMsgPrefix  string // checked via strings.Contains for flexibility
+		name          string
+		err           error
+		wantOK        bool
+		wantStatus    int
+		wantCode      string
+		wantMsgPrefix string
 	}{
 		{
-			name:   "non pg error",
+			name:   "non mssql error",
 			err:    fmt.Errorf("random error"),
 			wantOK: false,
 		},
 		{
-			name: "unique violation on endpoint slug",
-			err: &pgconn.PgError{
-				Code:           "23505",
-				ConstraintName: "proxy_endpoints_slug_key",
-				Message:        "duplicate key value violates unique constraint",
+			name: "unique violation on endpoint slug (2627)",
+			err: mssql.Error{
+				Number:  2627,
+				Message: "Violation of UNIQUE KEY constraint 'uq_proxy_endpoints_slug'. Cannot insert duplicate key in object 'gogateway.proxy_endpoints'.",
 			},
 			wantOK:        true,
 			wantStatus:    409,
@@ -35,11 +41,10 @@ func TestTranslatePgError(t *testing.T) {
 			wantMsgPrefix: "já existe um endpoint",
 		},
 		{
-			name: "unique violation on user username",
-			err: &pgconn.PgError{
-				Code:           "23505",
-				ConstraintName: "admin_users_username_key",
-				Message:        "duplicate key value violates unique constraint",
+			name: "unique violation on user username (2627)",
+			err: mssql.Error{
+				Number:  2627,
+				Message: "Violation of UNIQUE KEY constraint 'uq_admin_users_username'.",
 			},
 			wantOK:        true,
 			wantStatus:    409,
@@ -47,11 +52,21 @@ func TestTranslatePgError(t *testing.T) {
 			wantMsgPrefix: "já existe um usuário",
 		},
 		{
-			name: "check violation on provider_kind",
-			err: &pgconn.PgError{
-				Code:           "23514",
-				ConstraintName: "proxy_endpoints_provider_kind_check",
-				Message:        "violates check constraint",
+			name: "filtered unique index violation on key_prefix (2601)",
+			err: mssql.Error{
+				Number:  2601,
+				Message: "Cannot insert duplicate key row in object 'gogateway.api_keys' with unique index 'idx_api_keys_active_prefix'.",
+			},
+			wantOK:        true,
+			wantStatus:    409,
+			wantCode:      "duplicate",
+			wantMsgPrefix: "prefixo de chave",
+		},
+		{
+			name: "check violation on provider_kind (547)",
+			err: mssql.Error{
+				Number:  547,
+				Message: "The INSERT statement conflicted with the CHECK constraint 'ck_proxy_endpoints_provider_kind'.",
 			},
 			wantOK:        true,
 			wantStatus:    400,
@@ -59,22 +74,10 @@ func TestTranslatePgError(t *testing.T) {
 			wantMsgPrefix: "provider_kind inválido",
 		},
 		{
-			name: "not null violation",
-			err: &pgconn.PgError{
-				Code:       "23502",
-				ColumnName: "slug",
-				Message:    "null value in column",
-			},
-			wantOK:        true,
-			wantStatus:    400,
-			wantCode:      "missing_field",
-			wantMsgPrefix: "campo slug",
-		},
-		{
-			name: "foreign key violation",
-			err: &pgconn.PgError{
-				Code:    "23503",
-				Message: "foreign key violation",
+			name: "foreign key violation (547)",
+			err: mssql.Error{
+				Number:  547,
+				Message: "The INSERT statement conflicted with the FOREIGN KEY constraint 'fk_grants_application'.",
 			},
 			wantOK:        true,
 			wantStatus:    400,
@@ -82,10 +85,10 @@ func TestTranslatePgError(t *testing.T) {
 			wantMsgPrefix: "referência",
 		},
 		{
-			name: "unknown pg error code",
-			err: &pgconn.PgError{
-				Code:    "42P01",
-				Message: "relation does not exist",
+			name: "unknown mssql error number",
+			err: mssql.Error{
+				Number:  99999,
+				Message: "some unmapped server-side error",
 			},
 			wantOK: false,
 		},
@@ -116,26 +119,27 @@ func TestTranslatePgError(t *testing.T) {
 	}
 }
 
+// TestTranslatePgError_WrappedError confirms that fmt.Errorf("...: %w", err)
+// wrappers are unwrapped correctly via errors.As inside translatePgError.
 func TestTranslatePgError_WrappedError(t *testing.T) {
-	inner := &pgconn.PgError{
-		Code:           "23505",
-		ConstraintName: "proxy_endpoints_slug_key",
-		Message:        "dup",
+	inner := mssql.Error{
+		Number:  2627,
+		Message: "Violation of UNIQUE KEY constraint 'uq_proxy_endpoints_slug'.",
 	}
 	wrapped := fmt.Errorf("inserting endpoint: %w", inner)
 
 	_, code, _, _, ok := translatePgError(wrapped)
 	if !ok {
-		t.Fatal("expected wrapped pg error to be recognized")
+		t.Fatal("expected wrapped mssql error to be recognized")
 	}
 	if code != "duplicate" {
 		t.Errorf("code = %q, want duplicate", code)
 	}
 
-	// And errors.As-compatibility check:
-	var pg *pgconn.PgError
-	if !errors.As(wrapped, &pg) {
-		t.Error("errors.As broken — pg error not extractable")
+	// errors.As-compatibility check.
+	var mssqlErr mssql.Error
+	if !errors.As(wrapped, &mssqlErr) {
+		t.Error("errors.As broken — mssql.Error not extractable from wrapped error")
 	}
 }
 

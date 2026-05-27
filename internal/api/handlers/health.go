@@ -2,11 +2,10 @@ package handlers
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // Health handles GET /healthz — liveness probe.
@@ -23,7 +22,7 @@ func Health() http.HandlerFunc {
 }
 
 // Ready handles GET /readyz — readiness probe.
-// Returns 200 if both the PostgreSQL pool and the Azure endpoint are reachable.
+// Returns 200 if both the SQL Server connection and the Azure endpoint are reachable.
 // Returns 503 with a body listing failed checks otherwise.
 //
 // DB check uses a 1-second timeout (local network). Azure check uses 5 seconds
@@ -32,7 +31,8 @@ func Health() http.HandlerFunc {
 //
 // References:
 //   - SPEC.md §6.1, §13.3
-func Ready(pool *pgxpool.Pool, azureEndpoint string) http.HandlerFunc {
+//   - ADR-0022 — SQL Server backend
+func Ready(db *sql.DB, azureEndpoint string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		type result struct {
 			name string
@@ -45,11 +45,11 @@ func Ready(pool *pgxpool.Pool, azureEndpoint string) http.HandlerFunc {
 		go func() {
 			ctx, cancel := context.WithTimeout(r.Context(), time.Second)
 			defer cancel()
-			if err := pool.Ping(ctx); err != nil {
-				dbCh <- result{name: "postgres", err: "database unreachable"}
+			if err := db.PingContext(ctx); err != nil {
+				dbCh <- result{name: "sqlserver", err: "database unreachable"}
 				return
 			}
-			dbCh <- result{name: "postgres"}
+			dbCh <- result{name: "sqlserver"}
 		}()
 
 		go func() {

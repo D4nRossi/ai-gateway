@@ -4,17 +4,16 @@
 // References:
 //   - SPEC.md §12.2 — budget pre-check
 //   - SPEC.md §12.3 — budget update (async)
+//   - ADR-0022 — SQL Server (substitui pgxpool/PostgreSQL legacy)
 package budget
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
 	"time"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ErrBudgetExceeded is returned when the application's monthly spend cap is reached.
@@ -22,7 +21,7 @@ var ErrBudgetExceeded = errors.New("monthly budget exceeded")
 
 // PreChecker is the interface satisfied by Checker and any test stub.
 // Decoupling the chat handler from the concrete DB-backed Checker enables
-// unit testing without a live PostgreSQL connection.
+// unit testing without a live database connection.
 //
 // References:
 //   - SPEC.md §12.2
@@ -31,15 +30,15 @@ type PreChecker interface {
 	Check(ctx context.Context, appName string, budgetBRL float64) error
 }
 
-// Checker performs synchronous budget pre-checks against the budget_counters table.
+// Checker performs synchronous budget pre-checks against the gogateway.budget_counters table.
 type Checker struct {
-	pool   *pgxpool.Pool
+	db     *sql.DB
 	logger *slog.Logger
 }
 
-// NewChecker creates a Checker backed by the given connection pool.
-func NewChecker(pool *pgxpool.Pool, logger *slog.Logger) *Checker {
-	return &Checker{pool: pool, logger: logger}
+// NewChecker creates a Checker backed by the given SQL Server handle.
+func NewChecker(db *sql.DB, logger *slog.Logger) *Checker {
+	return &Checker{db: db, logger: logger}
 }
 
 // Check queries the current period's estimated spend for the application.
@@ -58,16 +57,16 @@ func (c *Checker) Check(ctx context.Context, appName string, budgetBRL float64) 
 	period := currentPeriod()
 
 	var spent float64
-	err := c.pool.QueryRow(
+	err := c.db.QueryRowContext(
 		qCtx,
 		`SELECT estimated_cost_brl
-		 FROM budget_counters
-		 WHERE application_name = $1 AND period_yyyymm = $2`,
+		 FROM gogateway.budget_counters
+		 WHERE application_name = @p1 AND period_yyyymm = @p2`,
 		appName, period,
 	).Scan(&spent)
 
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			// No spend recorded yet — allow the request.
 			return nil
 		}

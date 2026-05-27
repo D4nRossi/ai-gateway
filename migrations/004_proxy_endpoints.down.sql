@@ -1,6 +1,3 @@
-DROP INDEX IF EXISTS idx_grants_endpoint;
-DROP TABLE IF EXISTS application_endpoint_grants;
-DROP INDEX IF EXISTS idx_proxy_targets_endpoint;
-DROP TABLE IF EXISTS proxy_targets;
-DROP INDEX IF EXISTS idx_proxy_endpoints_slug;
-DROP TABLE IF EXISTS proxy_endpoints;
+IF OBJECT_ID('gogateway.application_endpoint_grants', 'U') IS NOT NULL DROP TABLE gogateway.application_endpoint_grants;
+IF OBJECT_ID('gogateway.proxy_targets', 'U')               IS NOT NULL DROP TABLE gogateway.proxy_targets;
+IF OBJECT_ID('gogateway.proxy_endpoints', 'U')             IS NOT NULL DROP TABLE gogateway.proxy_endpoints;

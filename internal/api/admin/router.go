@@ -43,11 +43,11 @@
 package admin
 
 import (
+	"database/sql"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	adminhandlers "github.com/D4nRossi/ai-gateway/internal/api/admin/handlers"
 	adminmw "github.com/D4nRossi/ai-gateway/internal/api/admin/middleware"
@@ -58,7 +58,7 @@ import (
 // Deps groups the dependencies needed to assemble the Admin API sub-router.
 type Deps struct {
 	Svc    *adminservice.Service
-	Pool   *pgxpool.Pool
+	DB     *sql.DB // ADR-0022 — substitui *pgxpool.Pool
 	Logger *slog.Logger
 }
 
@@ -123,9 +123,9 @@ func NewRouter(deps Deps) http.Handler {
 		// Observability: read-only, viewer or higher.
 		r.Group(func(r chi.Router) {
 			r.Use(adminmw.RequireRole(admin.RoleViewer))
-			r.Get("/v1/usage", adminhandlers.ListUsageEvents(deps.Pool))
-			r.Get("/v1/audit", adminhandlers.ListAuditEvents(deps.Pool))
-			r.Get("/v1/budget", adminhandlers.ListBudget(deps.Pool))
+			r.Get("/v1/usage", adminhandlers.ListUsageEvents(deps.DB))
+			r.Get("/v1/audit", adminhandlers.ListAuditEvents(deps.DB))
+			r.Get("/v1/budget", adminhandlers.ListBudget(deps.DB))
 		})
 	})
 

@@ -86,15 +86,62 @@ type AzureContentSafetyConfig struct {
 	ContentSafetyTimeoutMs int    `yaml:"content_safety_timeout_ms"`
 }
 
-// DatabaseConfig holds PostgreSQL connection settings.
+// DatabaseConfig holds SQL Server connection settings (ADR-0022).
+//
+// The previous PostgreSQL `url` field was replaced by structured fields so
+// the secret (password) can come isolated from ${kv:...} while the rest of
+// the connection metadata stays in plain YAML. The driver microsoft/go-mssqldb
+// is the only one supported here.
 type DatabaseConfig struct {
-	URL      string `yaml:"url"`
-	MaxConns int    `yaml:"max_conns"`
-	MinConns int    `yaml:"min_conns"`
+	// Driver currently must be "sqlserver". Kept as a field for forward
+	// compatibility (e.g. a future "sqlserver-azure" mode with token auth).
+	Driver string `yaml:"driver"`
 
-	// EncryptionKeyHex is a 64-character lowercase hex string (32 bytes) used as the
-	// AES-256-GCM key for encrypting proxy target credentials at rest (ADR-0012).
-	// Must be set via environment variable (e.g. ${DB_ENCRYPTION_KEY}).
+	// Host is the SQL Server hostname (e.g. BRSPVPDEV003).
+	Host string `yaml:"host"`
+
+	// Port is the TCP port; defaults to 1433 when 0.
+	Port int `yaml:"port"`
+
+	// Database is the catalog name (e.g. AzureAI_Gateway_hom).
+	Database string `yaml:"database"`
+
+	// User is the SQL Server login (e.g. usr_sist_AzureAI_Gateway_hom).
+	User string `yaml:"user"`
+
+	// Password is the secret for User. MUST come from a Key Vault reference
+	// (${kv:NAME}) — never plaintext in YAML. The Validate() method ensures
+	// the value is non-empty after ${kv:...} resolution.
+	Password string `yaml:"password"`
+
+	// Schema is the SQL Server schema where the gateway's own tables live
+	// (default "gogateway"). All queries qualify tables explicitly with this
+	// schema. The schema_migrations bookkeeping table created by
+	// golang-migrate is intentionally NOT placed in this schema — it stays
+	// in the user's default schema (typically dbo) so a partially-applied
+	// migration history can still be inspected even if the gogateway schema
+	// is dropped manually.
+	Schema string `yaml:"schema"`
+
+	// Encrypt requests TLS encryption on the wire. Default true.
+	Encrypt bool `yaml:"encrypt"`
+
+	// TrustServerCertificate disables server certificate verification.
+	// Useful for homologation where the SQL Server uses a self-signed cert;
+	// MUST be false in production (operator's responsibility).
+	TrustServerCertificate bool `yaml:"trust_server_certificate"`
+
+	// MaxConns caps the connection pool size (db.SetMaxOpenConns).
+	MaxConns int `yaml:"max_conns"`
+
+	// MinConns hints the minimum idle connections (db.SetMaxIdleConns).
+	// SQL Server's connection pool semantics are slightly different from
+	// pgxpool — there is no hard minimum; this value caps idle connections.
+	MinConns int `yaml:"min_conns"`
+
+	// EncryptionKeyHex is a 64-character lowercase hex string (32 bytes) used
+	// as the AES-256-GCM key for encrypting proxy target credentials at rest
+	// (ADR-0012). Must be set via environment variable (e.g. ${kv:DB-ENCRYPTION-KEY}).
 	// Never log or include this value in error messages.
 	EncryptionKeyHex string `yaml:"encryption_key_hex"`
 }
@@ -282,8 +329,32 @@ func (c *Config) Validate() error {
 	if c.AzureOpenAI.APIKey == "" {
 		errs = append(errs, errors.New("azure_openai.api_key is required"))
 	}
-	if c.Database.URL == "" {
-		errs = append(errs, errors.New("database.url is required"))
+	// Database — SQL Server estruturado (ADR-0022).
+	if c.Database.Driver == "" {
+		c.Database.Driver = "sqlserver"
+	}
+	if c.Database.Driver != "sqlserver" {
+		errs = append(errs, fmt.Errorf("database.driver %q is not supported; only \"sqlserver\" is allowed (ADR-0022)", c.Database.Driver))
+	}
+	if c.Database.Host == "" {
+		errs = append(errs, errors.New("database.host is required"))
+	}
+	if c.Database.Port == 0 {
+		c.Database.Port = 1433
+	} else if c.Database.Port < 1 || c.Database.Port > 65535 {
+		errs = append(errs, fmt.Errorf("database.port must be 1–65535, got %d", c.Database.Port))
+	}
+	if c.Database.Database == "" {
+		errs = append(errs, errors.New("database.database is required"))
+	}
+	if c.Database.User == "" {
+		errs = append(errs, errors.New("database.user is required"))
+	}
+	if c.Database.Password == "" {
+		errs = append(errs, errors.New("database.password is required (use ${kv:AzureAIGateway-DB-Password-hom} from Key Vault)"))
+	}
+	if c.Database.Schema == "" {
+		c.Database.Schema = "gogateway"
 	}
 	if !hexAES256Re.MatchString(c.Database.EncryptionKeyHex) {
 		errs = append(errs, errors.New("database.encryption_key_hex must be a 64-character lowercase hex string (32 bytes for AES-256)"))

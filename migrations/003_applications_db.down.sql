@@ -1,4 +1,2 @@
-DROP INDEX IF EXISTS idx_api_keys_prefix;
-DROP TABLE IF EXISTS api_keys;
-DROP INDEX IF EXISTS idx_applications_name_active;
-DROP TABLE IF EXISTS applications;
+IF OBJECT_ID('gogateway.api_keys', 'U')     IS NOT NULL DROP TABLE gogateway.api_keys;
+IF OBJECT_ID('gogateway.applications', 'U') IS NOT NULL DROP TABLE gogateway.applications;

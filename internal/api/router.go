@@ -14,6 +14,7 @@
 package api
 
 import (
+	"database/sql"
 	"log/slog"
 	"net/http"
 
@@ -25,7 +26,6 @@ import (
 	"github.com/D4nRossi/ai-gateway/internal/auth"
 	"github.com/D4nRossi/ai-gateway/internal/config"
 	"github.com/D4nRossi/ai-gateway/internal/ratelimit"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // RouterDeps groups dependencies needed to assemble the router.
@@ -36,7 +36,10 @@ type RouterDeps struct {
 	PolicyStore auth.PolicyStore
 	RateLimiter ratelimit.Limiter
 	AuditWriter audit.Emitter
-	Pool        *pgxpool.Pool
+	// DB is the SQL Server *sql.DB handle (ADR-0022). Replaces the previous
+	// *pgxpool.Pool field. Field name kept short ("DB") to reduce churn at
+	// the call sites in main.go.
+	DB *sql.DB
 	ChatDeps    handlers.ChatDeps
 	Logger      *slog.Logger
 	// AdminHandler is the fully assembled Admin API sub-router, mounted at /admin.
@@ -72,7 +75,7 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 
 	// ── Public endpoints (no auth required) ──────────────────────────────────
 	r.Get("/healthz", handlers.Health())
-	r.Get("/readyz", handlers.Ready(deps.Pool, deps.Config.AzureOpenAI.Endpoint))
+	r.Get("/readyz", handlers.Ready(deps.DB, deps.Config.AzureOpenAI.Endpoint))
 
 	// ── Authenticated endpoints ───────────────────────────────────────────────
 	r.Group(func(r chi.Router) {

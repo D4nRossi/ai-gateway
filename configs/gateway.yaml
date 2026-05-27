@@ -30,12 +30,25 @@ azure_language:
   language: pt-BR
 
 database:
-  url: ${kv:DATABASE-URL}
+  # SQL Server corporativo (ADR-0022). Substitui PostgreSQL.
+  # Schema dedicado isolado de outras aplicações que vivem no mesmo banco.
+  driver: sqlserver
+  host: BRSPVPDEV003
+  port: 1433
+  database: AzureAI_Gateway_hom
+  user: usr_sist_AzureAI_Gateway_hom
+  # Senha vem exclusivamente do Key Vault (ADR-0018). NUNCA em plaintext aqui.
+  password: ${kv:AzureAIGateway-DB-Password-hom}
+  schema: gogateway
+  # TLS na conexão (recomendado em qualquer ambiente real).
+  encrypt: true
+  # true em homologação com certificado self-signed; MUST ser false em produção.
+  trust_server_certificate: true
   max_conns: 20
   min_conns: 2
   # 64-char lowercase hex string (32 bytes) for AES-256-GCM encryption of proxy
-  # target credentials. Generate with: openssl rand -hex 32
-  # Never commit the real value; use the environment variable reference.
+  # target credentials (ADR-0012). Generate with: openssl rand -hex 32
+  # Never commit the real value; use the Key Vault reference.
   encryption_key_hex: ${kv:DB-ENCRYPTION-KEY}
 
 logging:

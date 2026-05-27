@@ -1,32 +1,45 @@
--- Migration 002: admin users and session tables.
--- Supports the opaque-session admin authentication scheme (ADR-0011).
+-- 002_admin_auth.up.sql (T-SQL)
+--
+-- Portado de migrations/postgres-legacy/002_admin_auth.up.sql (ADR-0022).
+-- Tabelas admin_users + admin_sessions para autenticação opaca (ADR-0011).
 
-CREATE TABLE admin_users (
-    id            BIGSERIAL    PRIMARY KEY,
-    username      VARCHAR(64)  NOT NULL UNIQUE,
-    -- bcrypt hash of the password (cost=12); never plaintext
-    password_hash VARCHAR(72)  NOT NULL,
-    role          VARCHAR(20)  NOT NULL CHECK (role IN ('admin', 'operator', 'viewer')),
-    active        BOOLEAN      NOT NULL DEFAULT true,
-    created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-);
+IF OBJECT_ID('gogateway.admin_users', 'U') IS NULL
+BEGIN
+    CREATE TABLE gogateway.admin_users (
+        id            BIGINT         IDENTITY(1,1) PRIMARY KEY,
+        username      NVARCHAR(64)   NOT NULL,
+        -- bcrypt hash de senha (cost=12); nunca plaintext
+        password_hash NVARCHAR(72)   NOT NULL,
+        role          NVARCHAR(20)   NOT NULL
+                          CONSTRAINT ck_admin_users_role CHECK (role IN ('admin', 'operator', 'viewer')),
+        active        BIT            NOT NULL DEFAULT 1,
+        created_at    DATETIMEOFFSET NOT NULL DEFAULT SYSUTCDATETIME(),
+        updated_at    DATETIMEOFFSET NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT uq_admin_users_username UNIQUE (username)
+    );
+END;
 
-CREATE TABLE admin_sessions (
-    id             BIGSERIAL    PRIMARY KEY,
-    admin_user_id  BIGINT       NOT NULL REFERENCES admin_users(id) ON DELETE CASCADE,
-    -- SHA-256 hex digest of the raw 32-byte token returned to the client
-    token_hash     VARCHAR(64)  NOT NULL UNIQUE,
-    expires_at     TIMESTAMPTZ  NOT NULL,
-    created_at     TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    -- NULL means session is active; NOT NULL means it was explicitly revoked
-    revoked_at     TIMESTAMPTZ
-);
+IF OBJECT_ID('gogateway.admin_sessions', 'U') IS NULL
+BEGIN
+    CREATE TABLE gogateway.admin_sessions (
+        id            BIGINT         IDENTITY(1,1) PRIMARY KEY,
+        admin_user_id BIGINT         NOT NULL,
+        -- SHA-256 hex digest do raw token (nunca plaintext)
+        token_hash    NVARCHAR(64)   NOT NULL,
+        expires_at    DATETIMEOFFSET NOT NULL,
+        created_at    DATETIMEOFFSET NOT NULL DEFAULT SYSUTCDATETIME(),
+        -- NULL = sessão ativa; NOT NULL = revogada
+        revoked_at    DATETIMEOFFSET NULL,
+        CONSTRAINT fk_admin_sessions_user
+            FOREIGN KEY (admin_user_id) REFERENCES gogateway.admin_users(id) ON DELETE CASCADE,
+        CONSTRAINT uq_admin_sessions_token UNIQUE (token_hash)
+    );
 
--- Fast lookup for the per-request auth middleware: find an active, non-expired session by hash.
-CREATE INDEX idx_admin_sessions_token
-    ON admin_sessions(token_hash)
-    WHERE revoked_at IS NULL;
+    -- Filtered index pro hot path de auth (lookup por hash, só sessões ativas).
+    CREATE INDEX idx_admin_sessions_token
+        ON gogateway.admin_sessions(token_hash)
+        WHERE revoked_at IS NULL;
 
-CREATE INDEX idx_admin_sessions_user
-    ON admin_sessions(admin_user_id);
+    CREATE INDEX idx_admin_sessions_user
+        ON gogateway.admin_sessions(admin_user_id);
+END;

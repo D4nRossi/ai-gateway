@@ -1,4 +1,2 @@
-DROP INDEX IF EXISTS idx_admin_sessions_user;
-DROP INDEX IF EXISTS idx_admin_sessions_token;
-DROP TABLE IF EXISTS admin_sessions;
-DROP TABLE IF EXISTS admin_users;
+IF OBJECT_ID('gogateway.admin_sessions', 'U') IS NOT NULL DROP TABLE gogateway.admin_sessions;
+IF OBJECT_ID('gogateway.admin_users', 'U')    IS NOT NULL DROP TABLE gogateway.admin_users;

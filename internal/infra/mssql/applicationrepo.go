@@ -1,22 +1,11 @@
-// Package postgres provides pgx v5 implementations of the domain repository interfaces.
-// Each repository wraps a *pgxpool.Pool and executes parameterized SQL queries.
-// No business logic lives here — only persistence.
-//
-// References:
-//   - ADR-0004 — pgx direct (no ORM)
-//   - ADR-0009 — DB-backed admin plane
-//   - ADR-0015 — infra layer implements domain interfaces
-//   - https://pkg.go.dev/github.com/jackc/pgx/v5/pgxpool
-package postgres
+package mssql
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
-
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/D4nRossi/ai-gateway/internal/domain/application"
 )
@@ -24,27 +13,32 @@ import (
 // Compile-time assertion: ApplicationRepo must satisfy application.Repository.
 var _ application.Repository = (*ApplicationRepo)(nil)
 
-// ApplicationRepo is the pgx implementation of application.Repository.
+// ApplicationRepo is the SQL Server implementation of application.Repository.
 type ApplicationRepo struct {
-	pool *pgxpool.Pool
+	db *sql.DB
 }
 
-// NewApplicationRepo constructs an ApplicationRepo backed by the given pool.
-func NewApplicationRepo(pool *pgxpool.Pool) *ApplicationRepo {
-	return &ApplicationRepo{pool: pool}
+// NewApplicationRepo constructs an ApplicationRepo backed by the given handle.
+func NewApplicationRepo(db *sql.DB) *ApplicationRepo {
+	return &ApplicationRepo{db: db}
 }
 
-// Create inserts a new Application row and returns the entity with ID, CreatedAt,
-// and UpdatedAt filled in by the database.
+// Create inserts a new Application row and returns the entity with ID,
+// CreatedAt, and UpdatedAt filled in by the database.
 func (r *ApplicationRepo) Create(ctx context.Context, app application.Application) (application.Application, error) {
-	const q = `
-		INSERT INTO applications
-		    (name, tier, allowed_models, streaming_allowed, max_rpm, max_tpm, monthly_budget_brl, active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, created_at, updated_at`
+	allowed, err := marshalStringArray(app.AllowedModels)
+	if err != nil {
+		return application.Application{}, fmt.Errorf("marshalling allowed_models for app %q: %w", app.Name, err)
+	}
 
-	row := r.pool.QueryRow(ctx, q,
-		app.Name, string(app.Tier), app.AllowedModels,
+	const q = `
+		INSERT INTO gogateway.applications
+		    (name, tier, allowed_models, streaming_allowed, max_rpm, max_tpm, monthly_budget_brl, active)
+		OUTPUT INSERTED.id, INSERTED.created_at, INSERTED.updated_at
+		VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8)`
+
+	row := r.db.QueryRowContext(ctx, q,
+		app.Name, string(app.Tier), allowed,
 		app.StreamingAllowed, app.MaxRPM, app.MaxTPM,
 		app.MonthlyBudgetBRL, app.Active,
 	)
@@ -54,27 +48,32 @@ func (r *ApplicationRepo) Create(ctx context.Context, app application.Applicatio
 	return app, nil
 }
 
-// CreateWithKey creates an Application and its initial APIKey in a single transaction,
-// ensuring the app is never accessible without a key (ADR-0009).
+// CreateWithKey creates an Application and its initial APIKey in a single
+// transaction, ensuring the app is never accessible without a key (ADR-0009).
 func (r *ApplicationRepo) CreateWithKey(ctx context.Context, app application.Application, key application.APIKey) (application.Application, application.APIKey, error) {
-	tx, err := r.pool.Begin(ctx)
+	allowed, err := marshalStringArray(app.AllowedModels)
+	if err != nil {
+		return application.Application{}, application.APIKey{}, fmt.Errorf("marshalling allowed_models for app %q: %w", app.Name, err)
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return application.Application{}, application.APIKey{}, fmt.Errorf("beginning create-with-key transaction: %w", err)
 	}
 	defer func() {
 		if err != nil {
-			_ = tx.Rollback(ctx)
+			_ = tx.Rollback()
 		}
 	}()
 
 	const qApp = `
-		INSERT INTO applications
+		INSERT INTO gogateway.applications
 		    (name, tier, allowed_models, streaming_allowed, max_rpm, max_tpm, monthly_budget_brl, active)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		RETURNING id, created_at, updated_at`
+		OUTPUT INSERTED.id, INSERTED.created_at, INSERTED.updated_at
+		VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8)`
 
-	rowApp := tx.QueryRow(ctx, qApp,
-		app.Name, string(app.Tier), app.AllowedModels,
+	rowApp := tx.QueryRowContext(ctx, qApp,
+		app.Name, string(app.Tier), allowed,
 		app.StreamingAllowed, app.MaxRPM, app.MaxTPM,
 		app.MonthlyBudgetBRL, app.Active,
 	)
@@ -84,16 +83,16 @@ func (r *ApplicationRepo) CreateWithKey(ctx context.Context, app application.App
 
 	key.ApplicationID = app.ID
 	const qKey = `
-		INSERT INTO api_keys (application_id, key_prefix, key_hash)
-		VALUES ($1, $2, $3)
-		RETURNING id, created_at`
+		INSERT INTO gogateway.api_keys (application_id, key_prefix, key_hash)
+		OUTPUT INSERTED.id, INSERTED.created_at
+		VALUES (@p1, @p2, @p3)`
 
-	rowKey := tx.QueryRow(ctx, qKey, key.ApplicationID, key.KeyPrefix, key.KeyHash)
+	rowKey := tx.QueryRowContext(ctx, qKey, key.ApplicationID, key.KeyPrefix, key.KeyHash)
 	if err = rowKey.Scan(&key.ID, &key.CreatedAt); err != nil {
 		return application.Application{}, application.APIKey{}, fmt.Errorf("inserting api key for app %q: %w", app.Name, err)
 	}
 
-	if err = tx.Commit(ctx); err != nil {
+	if err = tx.Commit(); err != nil {
 		return application.Application{}, application.APIKey{}, fmt.Errorf("committing create-with-key: %w", err)
 	}
 	return app, key, nil
@@ -104,13 +103,13 @@ func (r *ApplicationRepo) Get(ctx context.Context, id int64) (application.Applic
 	const q = `
 		SELECT id, name, tier, allowed_models, streaming_allowed,
 		       max_rpm, max_tpm, monthly_budget_brl, active, created_at, updated_at
-		FROM applications
-		WHERE id = $1`
+		FROM gogateway.applications
+		WHERE id = @p1`
 
-	row := r.pool.QueryRow(ctx, q, id)
-	app, err := scanApplication(row)
+	row := r.db.QueryRowContext(ctx, q, id)
+	app, err := scanApplicationRow(row)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return application.Application{}, fmt.Errorf("application id=%d: %w", id, application.ErrNotFound)
 		}
 		return application.Application{}, fmt.Errorf("getting application id=%d: %w", id, err)
@@ -123,13 +122,13 @@ func (r *ApplicationRepo) GetByName(ctx context.Context, name string) (applicati
 	const q = `
 		SELECT id, name, tier, allowed_models, streaming_allowed,
 		       max_rpm, max_tpm, monthly_budget_brl, active, created_at, updated_at
-		FROM applications
-		WHERE name = $1 AND active = true`
+		FROM gogateway.applications
+		WHERE name = @p1 AND active = 1`
 
-	row := r.pool.QueryRow(ctx, q, name)
-	app, err := scanApplication(row)
+	row := r.db.QueryRowContext(ctx, q, name)
+	app, err := scanApplicationRow(row)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return application.Application{}, fmt.Errorf("application %q: %w", name, application.ErrNotFound)
 		}
 		return application.Application{}, fmt.Errorf("getting application %q: %w", name, err)
@@ -142,10 +141,10 @@ func (r *ApplicationRepo) List(ctx context.Context) ([]application.Application, 
 	const q = `
 		SELECT id, name, tier, allowed_models, streaming_allowed,
 		       max_rpm, max_tpm, monthly_budget_brl, active, created_at, updated_at
-		FROM applications
+		FROM gogateway.applications
 		ORDER BY name`
 
-	rows, err := r.pool.Query(ctx, q)
+	rows, err := r.db.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("listing applications: %w", err)
 	}
@@ -167,21 +166,26 @@ func (r *ApplicationRepo) List(ctx context.Context) ([]application.Application, 
 
 // Update persists changes to an existing Application. ID must be set.
 func (r *ApplicationRepo) Update(ctx context.Context, app application.Application) (application.Application, error) {
-	const q = `
-		UPDATE applications
-		SET name = $1, tier = $2, allowed_models = $3, streaming_allowed = $4,
-		    max_rpm = $5, max_tpm = $6, monthly_budget_brl = $7, active = $8,
-		    updated_at = NOW()
-		WHERE id = $9
-		RETURNING updated_at`
+	allowed, err := marshalStringArray(app.AllowedModels)
+	if err != nil {
+		return application.Application{}, fmt.Errorf("marshalling allowed_models for app id=%d: %w", app.ID, err)
+	}
 
-	row := r.pool.QueryRow(ctx, q,
-		app.Name, string(app.Tier), app.AllowedModels,
+	const q = `
+		UPDATE gogateway.applications
+		SET name = @p1, tier = @p2, allowed_models = @p3, streaming_allowed = @p4,
+		    max_rpm = @p5, max_tpm = @p6, monthly_budget_brl = @p7, active = @p8,
+		    updated_at = SYSUTCDATETIME()
+		OUTPUT INSERTED.updated_at
+		WHERE id = @p9`
+
+	row := r.db.QueryRowContext(ctx, q,
+		app.Name, string(app.Tier), allowed,
 		app.StreamingAllowed, app.MaxRPM, app.MaxTPM,
 		app.MonthlyBudgetBRL, app.Active, app.ID,
 	)
 	if err := row.Scan(&app.UpdatedAt); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return application.Application{}, fmt.Errorf("application id=%d: %w", app.ID, application.ErrNotFound)
 		}
 		return application.Application{}, fmt.Errorf("updating application id=%d: %w", app.ID, err)
@@ -189,15 +193,19 @@ func (r *ApplicationRepo) Update(ctx context.Context, app application.Applicatio
 	return app, nil
 }
 
-// Delete soft-deletes an Application by setting active=false.
+// Delete soft-deletes an Application by setting active=0.
 func (r *ApplicationRepo) Delete(ctx context.Context, id int64) error {
-	const q = `UPDATE applications SET active = false, updated_at = NOW() WHERE id = $1`
+	const q = `UPDATE gogateway.applications SET active = 0, updated_at = SYSUTCDATETIME() WHERE id = @p1`
 
-	tag, err := r.pool.Exec(ctx, q, id)
+	result, err := r.db.ExecContext(ctx, q, id)
 	if err != nil {
 		return fmt.Errorf("deleting application id=%d: %w", id, err)
 	}
-	if tag.RowsAffected() == 0 {
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("checking rows affected for app id=%d: %w", id, err)
+	}
+	if n == 0 {
 		return fmt.Errorf("application id=%d: %w", id, application.ErrNotFound)
 	}
 	return nil
@@ -206,11 +214,11 @@ func (r *ApplicationRepo) Delete(ctx context.Context, id int64) error {
 // CreateAPIKey inserts a new APIKey and returns it with ID set.
 func (r *ApplicationRepo) CreateAPIKey(ctx context.Context, key application.APIKey) (application.APIKey, error) {
 	const q = `
-		INSERT INTO api_keys (application_id, key_prefix, key_hash)
-		VALUES ($1, $2, $3)
-		RETURNING id, created_at`
+		INSERT INTO gogateway.api_keys (application_id, key_prefix, key_hash)
+		OUTPUT INSERTED.id, INSERTED.created_at
+		VALUES (@p1, @p2, @p3)`
 
-	row := r.pool.QueryRow(ctx, q, key.ApplicationID, key.KeyPrefix, key.KeyHash)
+	row := r.db.QueryRowContext(ctx, q, key.ApplicationID, key.KeyPrefix, key.KeyHash)
 	if err := row.Scan(&key.ID, &key.CreatedAt); err != nil {
 		return application.APIKey{}, fmt.Errorf("inserting api key for app id=%d: %w", key.ApplicationID, err)
 	}
@@ -221,13 +229,13 @@ func (r *ApplicationRepo) CreateAPIKey(ctx context.Context, key application.APIK
 func (r *ApplicationRepo) GetAPIKeyByPrefix(ctx context.Context, prefix string) (application.APIKey, error) {
 	const q = `
 		SELECT id, application_id, key_prefix, key_hash, created_at, rotated_at
-		FROM api_keys
-		WHERE key_prefix = $1 AND rotated_at IS NULL`
+		FROM gogateway.api_keys
+		WHERE key_prefix = @p1 AND rotated_at IS NULL`
 
-	row := r.pool.QueryRow(ctx, q, prefix)
-	key, err := scanAPIKey(row)
+	row := r.db.QueryRowContext(ctx, q, prefix)
+	key, err := scanAPIKeyRow(row)
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+		if errors.Is(err, sql.ErrNoRows) {
 			return application.APIKey{}, fmt.Errorf("api key prefix %q: %w", prefix, application.ErrNotFound)
 		}
 		return application.APIKey{}, fmt.Errorf("getting api key for prefix %q: %w", prefix, err)
@@ -236,38 +244,39 @@ func (r *ApplicationRepo) GetAPIKeyByPrefix(ctx context.Context, prefix string) 
 }
 
 // RotateAPIKey atomically marks the current key as rotated and inserts newKey.
-// Zero-downtime: the new key is active before the old is invalidated, within one transaction.
+// Zero-downtime: the new key is active before the old is invalidated, within
+// one transaction.
 func (r *ApplicationRepo) RotateAPIKey(ctx context.Context, applicationID int64, newKey application.APIKey) (application.APIKey, error) {
-	tx, err := r.pool.Begin(ctx)
+	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return application.APIKey{}, fmt.Errorf("beginning rotation transaction: %w", err)
 	}
 	defer func() {
 		if err != nil {
-			_ = tx.Rollback(ctx)
+			_ = tx.Rollback()
 		}
 	}()
 
 	now := time.Now().UTC()
 
 	const markOld = `
-		UPDATE api_keys SET rotated_at = $1
-		WHERE application_id = $2 AND rotated_at IS NULL`
-	if _, err = tx.Exec(ctx, markOld, now, applicationID); err != nil {
+		UPDATE gogateway.api_keys SET rotated_at = @p1
+		WHERE application_id = @p2 AND rotated_at IS NULL`
+	if _, err = tx.ExecContext(ctx, markOld, now, applicationID); err != nil {
 		return application.APIKey{}, fmt.Errorf("marking old api key as rotated: %w", err)
 	}
 
 	const insertNew = `
-		INSERT INTO api_keys (application_id, key_prefix, key_hash)
-		VALUES ($1, $2, $3)
-		RETURNING id, created_at`
+		INSERT INTO gogateway.api_keys (application_id, key_prefix, key_hash)
+		OUTPUT INSERTED.id, INSERTED.created_at
+		VALUES (@p1, @p2, @p3)`
 	newKey.ApplicationID = applicationID
-	row := tx.QueryRow(ctx, insertNew, applicationID, newKey.KeyPrefix, newKey.KeyHash)
+	row := tx.QueryRowContext(ctx, insertNew, applicationID, newKey.KeyPrefix, newKey.KeyHash)
 	if err = row.Scan(&newKey.ID, &newKey.CreatedAt); err != nil {
 		return application.APIKey{}, fmt.Errorf("inserting rotated api key: %w", err)
 	}
 
-	if err = tx.Commit(ctx); err != nil {
+	if err = tx.Commit(); err != nil {
 		return application.APIKey{}, fmt.Errorf("committing key rotation: %w", err)
 	}
 	return newKey, nil
@@ -275,11 +284,12 @@ func (r *ApplicationRepo) RotateAPIKey(ctx context.Context, applicationID int64,
 
 // ── scan helpers ─────────────────────────────────────────────────────────────
 
-func scanApplication(row pgx.Row) (application.Application, error) {
+func scanApplication(s rowScanner) (application.Application, error) {
 	var app application.Application
 	var tier string
-	err := row.Scan(
-		&app.ID, &app.Name, &tier, &app.AllowedModels,
+	var allowedRaw string
+	err := s.Scan(
+		&app.ID, &app.Name, &tier, &allowedRaw,
 		&app.StreamingAllowed, &app.MaxRPM, &app.MaxTPM,
 		&app.MonthlyBudgetBRL, &app.Active, &app.CreatedAt, &app.UpdatedAt,
 	)
@@ -287,29 +297,36 @@ func scanApplication(row pgx.Row) (application.Application, error) {
 		return application.Application{}, err
 	}
 	app.Tier = application.TierLevel(tier)
-	return app, nil
-}
-
-func scanApplicationFromRows(rows pgx.Rows) (application.Application, error) {
-	var app application.Application
-	var tier string
-	err := rows.Scan(
-		&app.ID, &app.Name, &tier, &app.AllowedModels,
-		&app.StreamingAllowed, &app.MaxRPM, &app.MaxTPM,
-		&app.MonthlyBudgetBRL, &app.Active, &app.CreatedAt, &app.UpdatedAt,
-	)
+	app.AllowedModels, err = unmarshalStringArray(allowedRaw)
 	if err != nil {
-		return application.Application{}, err
+		return application.Application{}, fmt.Errorf("unmarshalling allowed_models for app id=%d: %w", app.ID, err)
 	}
-	app.Tier = application.TierLevel(tier)
 	return app, nil
 }
 
-func scanAPIKey(row pgx.Row) (application.APIKey, error) {
+func scanApplicationRow(row *sql.Row) (application.Application, error) {
+	return scanApplication(row)
+}
+
+func scanApplicationFromRows(rows *sql.Rows) (application.Application, error) {
+	return scanApplication(rows)
+}
+
+func scanAPIKey(s rowScanner) (application.APIKey, error) {
 	var key application.APIKey
-	err := row.Scan(
+	var rotatedAt sql.NullTime
+	err := s.Scan(
 		&key.ID, &key.ApplicationID, &key.KeyPrefix,
-		&key.KeyHash, &key.CreatedAt, &key.RotatedAt,
+		&key.KeyHash, &key.CreatedAt, &rotatedAt,
 	)
-	return key, err
+	if err != nil {
+		return application.APIKey{}, err
+	}
+	if rotatedAt.Valid {
+		t := rotatedAt.Time
+		key.RotatedAt = &t
+	}
+	return key, nil
 }
+
+func scanAPIKeyRow(row *sql.Row) (application.APIKey, error) { return scanAPIKey(row) }

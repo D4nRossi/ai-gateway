@@ -1,56 +1,79 @@
--- Migration 004: generic HTTP proxy engine tables.
--- Stores proxy endpoints, their upstream targets, and per-app access grants (ADR-0010, ADR-0013).
+-- 004_proxy_endpoints.up.sql (T-SQL)
+--
+-- Portado de migrations/postgres-legacy/004_proxy_endpoints.up.sql (ADR-0022).
+-- Tabelas para o motor genérico de proxy HTTP: proxy_endpoints, proxy_targets
+-- e application_endpoint_grants (ADR-0010, ADR-0013).
+--
+-- Nota sobre BYTEA → VARBINARY(MAX): auth_config_enc guarda o ciphertext
+-- AES-256-GCM (12-byte nonce || GCM ciphertext) das credenciais do target
+-- (ADR-0012). NULL quando auth_type='none'.
+--
+-- Nota sobre múltiplos CASCADE em application_endpoint_grants: SQL Server
+-- aceita múltiplas FK ON DELETE CASCADE chegando à mesma tabela contanto
+-- que NÃO haja ciclo lógico. Os dois caminhos aqui (applications → grants
+-- e proxy_endpoints → grants) não convergem por nenhum outro caminho, então
+-- a configuração é segura.
 
-CREATE TABLE proxy_endpoints (
-    id                    BIGSERIAL    PRIMARY KEY,
-    -- URL-safe identifier used in /v1/proxy/{slug}
-    slug                  VARCHAR(64)  NOT NULL UNIQUE,
-    name                  VARCHAR(128) NOT NULL,
-    lb_strategy           VARCHAR(30)  NOT NULL DEFAULT 'round_robin'
-                              CHECK (lb_strategy IN (
-                                  'round_robin', 'weighted_round_robin',
-                                  'random', 'least_connections', 'ip_hash'
-                              )),
-    -- 0 = unlimited
-    max_rps               INTEGER      NOT NULL DEFAULT 0,
-    max_monthly_requests  BIGINT       NOT NULL DEFAULT 0,
-    active                BOOLEAN      NOT NULL DEFAULT true,
-    created_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    updated_at            TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-);
+IF OBJECT_ID('gogateway.proxy_endpoints', 'U') IS NULL
+BEGIN
+    CREATE TABLE gogateway.proxy_endpoints (
+        id                    BIGINT          IDENTITY(1,1) PRIMARY KEY,
+        -- Identificador URL-safe usado em /v1/proxy/{slug}
+        slug                  NVARCHAR(64)    NOT NULL,
+        name                  NVARCHAR(128)   NOT NULL,
+        lb_strategy           NVARCHAR(30)    NOT NULL DEFAULT 'round_robin'
+                                CONSTRAINT ck_proxy_endpoints_lb_strategy CHECK (lb_strategy IN (
+                                    'round_robin', 'weighted_round_robin',
+                                    'random', 'least_connections', 'ip_hash'
+                                )),
+        -- 0 = ilimitado
+        max_rps               INT             NOT NULL DEFAULT 0,
+        max_monthly_requests  BIGINT          NOT NULL DEFAULT 0,
+        active                BIT             NOT NULL DEFAULT 1,
+        created_at            DATETIMEOFFSET  NOT NULL DEFAULT SYSUTCDATETIME(),
+        updated_at            DATETIMEOFFSET  NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT uq_proxy_endpoints_slug UNIQUE (slug)
+    );
 
-CREATE INDEX idx_proxy_endpoints_slug
-    ON proxy_endpoints(slug)
-    WHERE active = true;
+    CREATE INDEX idx_proxy_endpoints_slug
+        ON gogateway.proxy_endpoints(slug)
+        WHERE active = 1;
+END;
 
-CREATE TABLE proxy_targets (
-    id               BIGSERIAL    PRIMARY KEY,
-    endpoint_id      BIGINT       NOT NULL REFERENCES proxy_endpoints(id) ON DELETE CASCADE,
-    url              TEXT         NOT NULL,
-    -- used by weighted_round_robin; must be > 0
-    weight           INTEGER      NOT NULL DEFAULT 1 CHECK (weight > 0),
-    auth_type        VARCHAR(20)  NOT NULL DEFAULT 'none'
-                         CHECK (auth_type IN ('none', 'bearer_token', 'api_key_header', 'basic_auth')),
-    -- AES-256-GCM encrypted JSON of TargetAuth credentials (ADR-0012).
-    -- NULL when auth_type = 'none'.
-    -- Format: 12-byte nonce || GCM ciphertext (BYTEA).
-    auth_config_enc  BYTEA,
-    active           BOOLEAN      NOT NULL DEFAULT true,
-    created_at       TIMESTAMPTZ  NOT NULL DEFAULT NOW()
-);
+IF OBJECT_ID('gogateway.proxy_targets', 'U') IS NULL
+BEGIN
+    CREATE TABLE gogateway.proxy_targets (
+        id               BIGINT          IDENTITY(1,1) PRIMARY KEY,
+        endpoint_id      BIGINT          NOT NULL,
+        url              NVARCHAR(MAX)   NOT NULL,
+        weight           INT             NOT NULL DEFAULT 1
+                             CONSTRAINT ck_proxy_targets_weight CHECK (weight > 0),
+        auth_type        NVARCHAR(20)    NOT NULL DEFAULT 'none'
+                             CONSTRAINT ck_proxy_targets_auth_type CHECK (auth_type IN ('none', 'bearer_token', 'api_key_header', 'basic_auth')),
+        -- AES-256-GCM ciphertext (12-byte nonce || GCM ciphertext); NULL quando auth_type='none'.
+        auth_config_enc  VARBINARY(MAX)  NULL,
+        active           BIT             NOT NULL DEFAULT 1,
+        created_at       DATETIMEOFFSET  NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT fk_proxy_targets_endpoint
+            FOREIGN KEY (endpoint_id) REFERENCES gogateway.proxy_endpoints(id) ON DELETE CASCADE
+    );
 
-CREATE INDEX idx_proxy_targets_endpoint
-    ON proxy_targets(endpoint_id)
-    WHERE active = true;
+    CREATE INDEX idx_proxy_targets_endpoint
+        ON gogateway.proxy_targets(endpoint_id)
+        WHERE active = 1;
+END;
 
--- Controls which consumer applications may call which proxy endpoints.
--- An application without a grant receives 403 on /v1/proxy/{slug}.
-CREATE TABLE application_endpoint_grants (
-    application_id  BIGINT       NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
-    endpoint_id     BIGINT       NOT NULL REFERENCES proxy_endpoints(id) ON DELETE CASCADE,
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (application_id, endpoint_id)
-);
+IF OBJECT_ID('gogateway.application_endpoint_grants', 'U') IS NULL
+BEGIN
+    CREATE TABLE gogateway.application_endpoint_grants (
+        application_id  BIGINT          NOT NULL,
+        endpoint_id     BIGINT          NOT NULL,
+        created_at      DATETIMEOFFSET  NOT NULL DEFAULT SYSUTCDATETIME(),
+        CONSTRAINT pk_application_endpoint_grants PRIMARY KEY (application_id, endpoint_id),
+        CONSTRAINT fk_grants_application FOREIGN KEY (application_id) REFERENCES gogateway.applications(id) ON DELETE CASCADE,
+        CONSTRAINT fk_grants_endpoint    FOREIGN KEY (endpoint_id)    REFERENCES gogateway.proxy_endpoints(id) ON DELETE CASCADE
+    );
 
-CREATE INDEX idx_grants_endpoint
-    ON application_endpoint_grants(endpoint_id);
+    CREATE INDEX idx_grants_endpoint
+        ON gogateway.application_endpoint_grants(endpoint_id);
+END;
