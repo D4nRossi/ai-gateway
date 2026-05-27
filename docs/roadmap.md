@@ -135,6 +135,16 @@ Tudo abaixo escreve em `audit_events` (ou tabela paralela).
 ### 3.3 Segurança
 
 - **P1 — Onda 4.5 — Target credentials no Key Vault**. Resolve a quebra de targets quando `DB_ENCRYPTION_KEY` rotaciona (você viveu isso). Schema: nova coluna `proxy_targets.kv_secret_name TEXT NULL`. Quando preenchida, gateway lê credencial do KV em vez de decifrar AES local. Coexiste com modo legacy via fallback. Migração: CLI `cmd/migrate-targets-to-kv` move targets existentes em batch. Vira **ADR-0020**.
+- **P1 — Dívida: rotacionar secrets da POC TPCore.Modules.AgentFlow**. Em
+  2026-05-27, durante a análise da POC pra Onda 8, o `appsettings.json` da
+  POC apareceu no chat com **8 secrets em texto plano** (VoiceLive eus2 +
+  teste, ElevenLabs, Cartesia, MicrosoftGraph ClientSecret, Zenvia ApiToken,
+  STT Azure brazilsouth, OpenAI Azure cockpit, DB password). Owner decidiu
+  postergar a rotação ("foco em funcionalidade primeiro"). Quando virar
+  prioridade: rotacionar todas, mover pro Key Vault corporativo
+  (`danieldev` ou similar), e atualizar a POC pra usar `${kv:...}` ou
+  equivalente .NET (User Secrets em dev, KV em prod via DefaultAzureCredential).
+  Sem urgência declarada mas registrado pra não esquecer.
 - **P2 — Validação sistemática de inputs**. Auditoria dos handlers admin (`internal/api/admin/handlers/`): comprimento máximo, sanitização de slug, validação de URL de target, validação de hex, defesa contra SQL injection (`database/sql` + `microsoft/go-mssqldb` parameter mode `@p1, @p2, ...` já cobre — confirmar 100%).
 - **P2 — IP allowlist por aplicação**. Tabela `application_ip_allowlist`. Auth middleware rejeita com 403 se IP origem não está na lista (vazia = permite tudo).
 - **P3 — mTLS upstream opcional**. Target ganha campo `client_cert_pem` cifrado (KV). Transport per-target em vez do shared.
@@ -309,7 +319,7 @@ Ondas entregues indexadas pelos ADRs que decidiram cada uma.
 | 6 | Latency breakdown observável | ADR-0021 | ✅ código; ⏳ validação ao vivo (interrompida pela Onda 7) |
 | 7 | Troca emergencial PostgreSQL → SQL Server (schema gogateway) | ADR-0022 | ✅ **accepted** (smoke test passou 2026-05-27) |
 | 4.5 | Target credentials no Key Vault | ADR-0020 a fazer | ⏳ planejada (desbloqueada após Onda 7) |
-| 8 | Streaming de áudio bidirecional via Azure Voice Live | ADR-0023 a fazer | ⏳ **próxima P1** — spike técnico antes do design |
+| 8 | Streaming de áudio bidirecional (pipeline híbrido — Voice Live STT + Azure OpenAI LLM + ElevenLabs TTS) | ADR-0023 a fazer | ⏳ **execução em sub-ondas 8.0–8.5** (ver tabela abaixo). Owner escolheu Opção C em 2026-05-27 após análise da POC TPCore.Modules.AgentFlow |
 | (sem nº) | SSO Entra ID / OIDC | ADR-0024 a fazer | ⏳ planejada (depende de App Registration no Entra) |
 | (sem nº) | Modelos como CRUD + Page Models | ADR-0025 a fazer? | ⏳ planejada |
 | (sem nº) | Segregação hot/warm path | (avaliar) | ⏳ adiar até hot path sangrar |
@@ -327,8 +337,38 @@ Ondas entregues indexadas pelos ADRs que decidiram cada uma.
 **Notas sobre a Onda 8 (streaming áudio Voice Live, próxima P1)**:
 - Trigger: owner tem subscription Voice Live e quer usar como provider via gateway.
 - Latência é problema número 1. Decisões serão de "menos pior" (owner explícito).
-- Spike técnico (sem gateway) antes do design pra estabelecer baseline.
-- Schema novo `gogateway.audio_sessions` (não usa o `usage_events` clássico).
-- ADR-0023 cobre: transporte (WebSocket passthrough), codec (passthrough binário), auth (bearer no upgrade), CS (delegado ao Voice Live + audit), tier policy, cancelation, schema.
+- Spike técnico (`_voicelive-spike/`) executado em 2026-05-27, comprovou
+  latência sub-segundo no modo Pure (404ms média, 571ms p95 medidos).
+- Análise da POC TPCore.Modules.AgentFlow em
+  `_voicelive-spike/POC_ANALYSIS.md`: voz natural exige modo Hybrid
+  (Voice Live STT + LLM próprio + ElevenLabs TTS). Modo Pure sozinho
+  entrega voz Azure standard reconhecidamente robótica.
+- Owner escolheu Opção C (replicar pipeline completo) em 2026-05-27.
+  Escopo estimado: 2-3 meses focado, decomposto em 5 sub-ondas
+  (ver tabela "Decomposição da Onda 8" logo abaixo).
+- Schema novo `gogateway.audio_sessions` (não reutiliza `usage_events`).
+- ADR-0023 cobre: transporte (WebSocket bidirecional stateful), modos
+  Pure/Hybrid selecionáveis, schema DB, schema de eventos JSON entre
+  cliente e gateway, política de tier, observability, state machine
+  por sessão. TTS provider default: **ElevenLabs** (espelha a POC).
+
+### Decomposição da Onda 8
+
+Cada sub-onda é fech\ável e commitada independentemente. 8.1 sozinha já
+agrega valor (proxy auditado de Voice Live).
+
+| Sub-onda | Tema | Estimativa | Entrega checkpoint |
+|---|---|---|---|
+| **8.0** | ADR-0023 redigido + aprovado | 1-2 dias | Documento arquitetural completo |
+| **8.1** | Proxy Pure Voice Live no gateway | 2 semanas | Cliente fala com gateway via WS, gateway proxia Voice Live, audit em `gogateway.audio_sessions`. Voz Azure standard (robótica, mas funcional). |
+| **8.2** | Modo Hybrid: Voice Live STT + Azure OpenAI LLM + ElevenLabs TTS | 3-4 semanas | Voz natural via ElevenLabs. Streaming text→audio. Schema de provider config por aplicação. |
+| **8.3** | Fillers semânticos + barge-in + containment | 1-2 semanas | Latência percebida sub-1s. Detecção de cenários (acceptance, hold, price objection, etc.). |
+| **8.4** | Frontend cliente (web ou mobile) | 1-2 semanas | UI que captura áudio do mic, abre WS com gateway, toca áudio do agente. |
+| **8.5** | Polimento + observability + load tests | 1 semana | Métricas em dashboard, alertas, perf testing multi-sessão. |
+
+ADRs subordinados que podem ser necessários durante execução:
+- ADR-0024: TTS provider abstraction + escolha ElevenLabs vs Cartesia
+- ADR-0025: Schema de agentes/personalidade/fillers no DB (se 8.3 demandar)
+- ADR-0026: Frontend audio transport (WebSocket cliente nativo vs WebRTC) — frente da 8.4
 
 ADRs livres a partir de **0023**.
