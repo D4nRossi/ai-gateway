@@ -434,18 +434,27 @@ func scanEndpointFromRows(rows *sql.Rows) (endpoint.ProxyEndpoint, error) {
 	return scanEndpoint(rows)
 }
 
-// marshalProviderConfig serializes a ProviderConfig to bytes. A nil/empty map
-// becomes `{}` so the DB never sees null on a NOT NULL NVARCHAR(MAX) column
-// guarded by ISJSON CHECK.
-func marshalProviderConfig(pc endpoint.ProviderConfig) ([]byte, error) {
+// marshalProviderConfig serializes a ProviderConfig to a JSON STRING. A
+// nil/empty map becomes "{}" so the DB never sees null on a NOT NULL
+// NVARCHAR(MAX) column guarded by ISJSON CHECK.
+//
+// Why string (not []byte): the microsoft/go-mssqldb driver maps []byte
+// parameters to VARBINARY, NOT to NVARCHAR. When the SQL Server then
+// coerces VARBINARY → NVARCHAR(MAX) implicitly, the resulting value is the
+// hex representation of the bytes (e.g. "0x7B7D" for `{}`), which is NOT
+// valid JSON — so the ISJSON CHECK constraint on provider_config rejects
+// the row. Returning string sidesteps that: driver maps string → NVARCHAR
+// directly, and ISJSON sees the literal `{}`/`{"key":...}`. Same applies to
+// audit_events.metadata (handled in internal/audit/writer.go).
+func marshalProviderConfig(pc endpoint.ProviderConfig) (string, error) {
 	if len(pc) == 0 {
-		return []byte("{}"), nil
+		return "{}", nil
 	}
 	b, err := json.Marshal(pc)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return b, nil
+	return string(b), nil
 }
 
 // unmarshalProviderConfig parses NVARCHAR(MAX) JSON bytes into a ProviderConfig.
