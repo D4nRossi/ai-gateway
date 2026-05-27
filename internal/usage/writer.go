@@ -78,16 +78,36 @@ const insertSQL = `
 INSERT INTO usage_events (
 	request_id, application_name, tier, model, provider,
 	input_tokens, output_tokens, total_tokens,
-	latency_ms, status_code, estimated_cost_brl, created_at
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`
+	latency_ms, status_code, estimated_cost_brl, created_at,
+	lat_auth_ms, lat_mask_ms, lat_guardrails_ms, lat_provider_ms, lat_encode_ms
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`
 
+// nullIfZero turns a 0 latency bucket into nil so the DB stores NULL.
+// Reasoning: 0 in the struct can mean either "instrumented but sub-ms" or
+// "not instrumented at all". We can't tell apart at the writer layer, so we
+// adopt the convention: callers either populate all 5 buckets (where 0 is
+// legit for unused buckets like guardrails in Tier 1) or none. Storing 0 as
+// NULL only when ALL buckets are 0 keeps Tier 1 dashboards honest without
+// invalidating Tier 2/3 measurements that happen to have a sub-ms bucket.
 func (w *Writer) insert(e UsageEvent) {
+	allZero := e.LatAuthMs == 0 && e.LatMaskMs == 0 &&
+		e.LatGuardrailsMs == 0 && e.LatProviderMs == 0 && e.LatEncodeMs == 0
+
+	var latAuth, latMask, latGuard, latProv, latEnc any
+	if allZero {
+		latAuth, latMask, latGuard, latProv, latEnc = nil, nil, nil, nil, nil
+	} else {
+		latAuth, latMask, latGuard, latProv, latEnc =
+			e.LatAuthMs, e.LatMaskMs, e.LatGuardrailsMs, e.LatProviderMs, e.LatEncodeMs
+	}
+
 	_, err := w.pool.Exec(
 		context.Background(),
 		insertSQL,
 		e.RequestID, e.ApplicationName, e.Tier, e.Model, e.Provider,
 		e.InputTokens, e.OutputTokens, e.TotalTokens,
 		e.LatencyMs, e.StatusCode, e.EstimatedCostBRL, e.CreatedAt,
+		latAuth, latMask, latGuard, latProv, latEnc,
 	)
 	if err != nil {
 		w.logger.Error("inserting usage event",

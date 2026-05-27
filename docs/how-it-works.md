@@ -191,6 +191,63 @@ As migrations rodam automaticamente no boot (`db.RunMigrations`) e são idempote
 
 ---
 
+## Latência observável por bucket (ADR-0021)
+
+Toda chamada bem-sucedida a `/v1/chat/completions` retorna o header
+`X-Gateway-Latency-Breakdown` com a decomposição da latência total em 5
+buckets, e persiste os mesmos valores em colunas dedicadas de
+`usage_events`:
+
+```
+X-Gateway-Latency-Breakdown: auth=2;mask=180;guardrails=0;provider=2400;encode=3
+```
+
+| Bucket | O que mede |
+|---|---|
+| `auth` | Decode do body, validação de modelo permitido, leitura da policy do contexto |
+| `mask` | Regex local + Azure AI Language PII (cloud, Tier 2/3) |
+| `guardrails` | Local injection scan + Azure Prompt Shield + Content Safety |
+| `provider` | Marshal + HTTP roundtrip + unmarshal da chamada Azure OpenAI |
+| `encode` | JSON marshal da response + Write (não-stream); merged em provider no stream |
+
+"Other" = `latency_ms - sum(buckets)`. Costuma ficar em 1-5ms (middleware
+chi + audit emit assíncrono). Se virar >50ms, é sinal pra investigar.
+
+### Querying
+
+```sql
+-- p50/p95/p99 de cada bucket nas últimas 24h por aplicação
+SELECT
+  application_name,
+  percentile_cont(0.50) WITHIN GROUP (ORDER BY lat_provider_ms) AS p50_provider,
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY lat_provider_ms) AS p95_provider,
+  percentile_cont(0.50) WITHIN GROUP (ORDER BY lat_mask_ms)     AS p50_mask,
+  percentile_cont(0.95) WITHIN GROUP (ORDER BY lat_mask_ms)     AS p95_mask
+FROM usage_events
+WHERE created_at >= NOW() - INTERVAL '24 hours'
+  AND lat_provider_ms IS NOT NULL
+GROUP BY application_name;
+
+-- onde está o gargalo da minha latência (top 100 requests mais lentos)
+SELECT request_id, application_name, latency_ms,
+       lat_auth_ms, lat_mask_ms, lat_guardrails_ms, lat_provider_ms, lat_encode_ms,
+       latency_ms - COALESCE(lat_auth_ms,0) - COALESCE(lat_mask_ms,0)
+                  - COALESCE(lat_guardrails_ms,0) - COALESCE(lat_provider_ms,0)
+                  - COALESCE(lat_encode_ms,0) AS other_ms
+FROM usage_events
+ORDER BY latency_ms DESC
+LIMIT 100;
+```
+
+### Limitação no streaming
+
+Em SSE, o header `X-Gateway-Latency-Breakdown` é emitido **antes** do
+primeiro chunk e por isso traz `provider=0` e `encode=0`. Os valores
+finais ainda são persistidos corretamente em `usage_events` ao final do
+stream. Pra inspecionar latência de streaming, use as queries SQL acima.
+
+---
+
 ## Detecção de PII em duas camadas (ADR-0019)
 
 Tier 2 e Tier 3 rodam dois detectores **em sequência**, no body já mascarado:

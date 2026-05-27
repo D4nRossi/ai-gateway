@@ -1,335 +1,243 @@
 # Roadmap
 
-Estado real do projeto e frentes em andamento. Não há datas — entregas são feitas conforme prioridade do owner.
+Estado real do projeto e frentes em aberto, organizadas por **eixos estratégicos**. Sem datas — entregas são feitas conforme prioridade do owner.
+
+> **Como ler este documento**
+>
+> - **§1 Estado atual** — o que está em produção e testável agora.
+> - **§2 Em execução** — trabalho ativo no momento da última conversa.
+> - **§3 Eixos estratégicos** — todas as outras frentes agrupadas por intenção (auditoria, desempenho, segurança, requisitos, dados, legalidade, escalabilidade). Cada item declara prioridade relativa (P1/P2/P3) e trade-offs conhecidos. Prioridade aqui é uma sugestão de ordem; o owner decide.
+> - **§4 Decisões pendentes** — frentes anotadas mas que ainda precisam de definição de escopo antes de virar PR.
+> - **§5 Backlog técnico** — itens não funcionais (cobertura, CI, infra de teste).
+> - **§6 Histórico de ondas** — entregas anteriores indexadas com seus ADRs.
 
 ---
 
 ## 1. Estado atual (concluído)
 
-### Phase 1 — Demo executável (concluída)
+Tudo abaixo está em produção no branch `v2`.
 
-Núcleo do gateway de IA. Tudo abaixo está em produção do branch `main`/`v2`.
+### Phase 1 — Gateway core de IA
 
 | Componente | Notas |
 |---|---|
-| Bootstrap (`cmd/gateway/main.go`) | Composição de dependências, graceful shutdown (SIGINT/SIGTERM) |
-| Config (`configs/gateway.yaml`) | Expansão de `${VAR}` no boot, validação fail-fast |
-| Auth Bearer + SHA-256 | Constant-time compare; prefix O(1) lookup; **ASCII-only enforcement** (Onda 1) |
-| Rate limit token-bucket por app | `golang.org/x/time/rate`; burst = RPM/10 |
-| Pipeline por tier (1/2/3) | Masking regex → injeção local → Azure CS → post-validação |
-| PII masking regex | CPF (mod-11), CNPJ (mod-11), cartão (Luhn), e-mail, telefone BR, CEP |
-| Injeção local | 14 padrões, case-insensitive, word boundary |
-| Azure Content Safety (Tier 3) | Prompt Shield + Text Analyze; fail-closed |
+| Bootstrap + graceful shutdown | `cmd/gateway/main.go`, SIGINT/SIGTERM |
+| Config YAML + expansão `${VAR}` e `${kv:NAME}` | Fail-fast no boot |
+| Auth Bearer + SHA-256 constant-time | ASCII-only prefix (Onda 1) |
+| Rate limit token-bucket por app | `golang.org/x/time/rate` in-memory |
+| Pipeline por tier (1/2/3) | Masking regex → Language PII → injection → CS → post-val |
+| PII regex | CPF mod-11, CNPJ mod-11, cartão Luhn, e-mail, tel BR, CEP |
+| Azure AI Language PII | Tier 2 fail-open, Tier 3 fail-closed (ADR-0019) |
+| Injeção local (keywords) | 14 padrões, word-boundary |
+| Azure Content Safety (opcional, Tier 3) | Prompt Shield + Text Analyze |
 | Post-validação (Tier 3) | Scanner local na saída do modelo |
 | Provider Azure OpenAI | Non-stream + SSE streaming |
-| Provider Mock | Resposta determinística para dev/testes |
-| Budget pre-check + counter (async) | Fail-open com timeout; UPSERT via canal |
-| Usage / Audit events (async) | Worker em background com buffer de canal |
-| PostgreSQL (pgx + pool) | pgxpool, ping no boot |
-| Migrations (golang-migrate) | 5 migrations, `up`/`down` simétricas |
-| Streaming SSE | `WriteTimeout=0` (ADR-0008), Flusher, `stream_cancelled` |
-| Timeout 504 vs 502 | `errors.Is(context.DeadlineExceeded)` → 504 |
-| Dockerfile + docker-compose | Multi-stage, non-root, healthcheck |
-| Suite de testes | ~120 casos, benchmarks, race-detector limpo |
+| Provider Mock | Resposta determinística pra dev |
+| Budget pre-check + counter (async) | UPSERT via canal |
+| Usage / Audit events (async) | Worker em background |
+| PostgreSQL (pgx) + migrations idempotentes | 7 migrations aplicadas no boot |
+| Streaming SSE | `WriteTimeout=0` (ADR-0008), `stream_cancelled` audit |
 
-### v2 — Admin plane + Proxy plane (concluída)
-
-Adições da branch `v2` ao demo original. Mantém compatibilidade total com Phase 1.
+### v2 — Admin plane + Proxy plane
 
 | Componente | Notas |
 |---|---|
 | Admin auth (bcrypt + sessões opacas) | ADR-0011 |
-| Tabelas `applications` + `api_keys` no DB | Substitui (não remove) o YAML de apps |
-| CLI `cmd/admin-create` | Provisiona o primeiro admin |
-| CRUD de aplicações pela UI | Criação, rotação de chave, soft-delete |
-| Proxy plane `/v1/proxy/{slug}/*` | Engine genérico baseado em `httputil.ReverseProxy` (ADR-0010) |
-| Endpoints + targets cadastráveis | DB-backed, credenciais criptografadas (AES-256-GCM, ADR-0012) |
-| Load balancer (round-robin / least-conn / ip-hash) | ADR-0013 |
-| Provider catalog | 10 providers + `custom` (ADR-0016, Lote A.6 do console) |
-| Console React+Vite embedado no binário | `//go:embed` (ADR-0014) |
-| Playground UI | Disparo ad-hoc sem curl/Postman |
-| Página de Observability | Tabs Uso / Auditoria / Budget |
-| Quality of life (search, refresh, Cmd+K, breadcrumbs) | Lote A do console |
+| Tabelas DB-backed `applications` + `api_keys` | UNIQUE parcial pós-bugfix 007 |
+| CLI `cmd/admin-create` | Provisiona primeiro admin |
+| Proxy plane `/v1/proxy/{slug}/*` | Engine genérico (ADR-0010) |
+| Endpoints + targets cadastráveis | Credenciais AES-256-GCM (ADR-0012) |
+| Load balancer (RR / weighted / least-conn / random / ip-hash) | ADR-0013 |
+| Provider catalog (10 + custom) | ADR-0016 |
+| Path translation por `provider_kind` | ADR-0017 (Onda 2) |
+| Azure Key Vault como provider de segredos | ADR-0018 (Onda 3) |
+| Console React+Vite embedado | ADR-0014 |
+| Form de endpoint Azure com `provider_config` | Onda 5A |
+| Playground modo canônico Azure + catálogo de exemplos | Onda 5B + 5F |
+| Alert/Dialog corrigidos pra dark mode + perf | Onda 5C + 5D |
+| Quality of life UI (search, refresh, Cmd+K, breadcrumbs) | Lote A do console |
 
-### Onda 1 — Hardening de tokens ASCII (concluída)
+### Bugfixes capturados em validação ao vivo
 
-Diagnóstico em `git log` do commit referente. Resumo: `deriveKeyPrefix` aceitava Unicode (`unicode.IsLetter/IsDigit`), o que gerava prefixes com bytes multibyte que conflitam com a transliteração latin-1 que clientes HTTP fazem em headers (RFC 7230). O resultado era `SQLSTATE 22021` no Postgres surfacando como 500 confuso.
-
-- `internal/auth/hash.go` — `ExtractPrefix` rejeita qualquer byte fora de 0x21–0x7E
-- `internal/app/adminservice/service.go` — `deriveKeyPrefix` restrito a `[a-z0-9]`
-- `internal/proxy/auth.go` — early-return 401 antes do hit no DB
-- 14 casos de teste novos (UTF-8, latin-1, espaços, tabs, byte ≥ 0x80)
-
----
-
-## 2. Ondas em execução
-
-Ordem fechada em conversa anterior. Cada onda é um PR independente com critério de done explícito.
-
-### Onda 2 — Path translation por `provider_kind` (próxima)
-
-**Pedido:** "a aplicação só chama seu respectivo endpoint e o gateway resolve tudo". Hoje o cliente precisa colar `/openai/deployments/gpt-4.1/chat/completions?api-version=2025-01-01-preview`; depois disso vai chamar `POST /v1/proxy/{slug}/chat/completions` com body OpenAI-style.
-
-**Escopo:**
-- Migration nova: `006_endpoint_provider_config.up.sql` adiciona `provider_config JSONB DEFAULT '{}'` em `proxy_endpoints`. Pra Azure: `{api_version, model_to_deployment: {...}}`
-- Novo `internal/proxy/translator/` com interface `PathTranslator` + impl `AzureOpenAITranslator`
-- `internal/proxy/director.go` ganha hook que invoca translator quando `provider_kind != "custom"`
-- UI: campos `api_version` + mapping no form de endpoint Azure
-- Playground reformulado: campo "model" + body OpenAI-style automático em endpoints Azure
-- ADR-0017 (path translation no proxy plane)
-
-**Critério de done:** request `POST /v1/proxy/{slug}/chat/completions` body `{"model":"gpt-4.1","messages":[...]}` chega no Azure pelo deployment correto. Endpoint `custom` continua passthrough idêntico.
-
-### Onda 3 — Azure Key Vault (concluída)
-
-Entregue. ADR-0018 + `internal/infra/keyvault/` + sintaxe `${kv:NAME}` no
-YAML resolvida por `os.Expand` customizado (preserva markers KV durante a
-expansão de env). Cache em memória RWMutex+TTL (default 5 min, lazy
-refresh). `DefaultAzureCredential` cobre dev (`az login`) e prod (Managed
-Identity).
-
-Hotfix dentro da onda: `os.ExpandEnv` consumia `${kv:…}` como env var e
-substituía por string vazia antes do resolver KV ver — sintoma era
-`Validate()` reclamando "is required" mesmo com secrets cadastrados no
-vault. Corrigido com `expandEnvPreservingKV` + 2 testes de regressão.
-
-Bug pré-existente corrigido oportunisticamente: fixture
-`baseValidConfig` faltava `EncryptionKeyHex` (quebrado desde ADR-0012);
-`chatHandler` test helper não populava `Maskers` no `ChatDeps` (panic em
-`nil.Mask` nos load tests). Suite 100% verde pela primeira vez.
-
-Migrados: `AZURE_OPENAI_API_KEY`, `DB_ENCRYPTION_KEY`, `DATABASE_URL`,
-`AZURE_CS_API_KEY` (opcional).
-
-Conseqüência operacional descoberta na validação: rotacionar
-`DB_ENCRYPTION_KEY` no KV invalida targets já cadastrados (AES-GCM
-detecta com "authentication tag mismatch"). Mitigação imediata:
-recadastrar targets. Resolução de longo prazo na Onda 4.5 abaixo.
-
-### Onda 4.5 — Target credentials no Key Vault (anotada, não iniciada)
-
-**Pedido (descoberto durante validação da Onda 3):** ao cadastrar
-endpoint/target via admin UI, salvar a credencial diretamente no Key Vault
-e guardar no DB apenas uma referência (nome do secret). Elimina o
-`DB_ENCRYPTION_KEY` como ponto único de falha e remove segredo do dump do
-Postgres.
-
-**Escopo previsto:**
-- ADR-0020 (parcial supersede do ADR-0012; AES continua válido pra
-  ambientes sem KV)
-- Schema: nova coluna `proxy_targets.kv_secret_name TEXT NULL`. Fallback
-  pro modo legacy (`auth_config_enc` AES) quando NULL — coexistência
-  durante migração
-- `AddTarget`: gera nome único (`gw-target-{uuid}`), `SetSecret` no KV,
-  salva nome no DB. Saga simples: KV primeiro, DB depois (se DB falhar,
-  KV vira órfão e expira no soft-delete; aceito)
-- `UpdateTarget`: overwrite no nome existente (idempotente)
-- `RemoveTarget`: soft-delete no KV (90 dias). Nome com UUID evita
-  colisão pós-recovery
-- `loadTargets`: detecta `kv_secret_name`, busca do KV; senão decripta
-  legacy
-- CLI `cmd/migrate-targets-to-kv` para mover targets existentes em batch
-- Permissão escalada do gateway no KV: `Secrets Officer` (write/delete)
-  no role assignment, não só `User`
-
-**Trade-offs já identificados:**
-- (+) Resolve a quebra de targets em rotação do DB_ENCRYPTION_KEY
-- (+) Auditoria nativa Azure Monitor por target
-- (+) Postgres dump sem segredos
-- (-) Superfície de ataque maior (write permission no KV)
-- (-) Não atômico (KV + DB são stores separados); aceitar saga e órfãos
-- (-) Soft-delete de 7-90 dias do KV exige naming com UUID
-
-Não está na fila imediata — Onda 4 (Language PII) e Onda 5 (UI) vêm
-primeiro.
-
-### Onda 4 — Azure Language PII (concluída)
-
-Entregue. ADR-0019 + `internal/security/azlanguage/` (cliente HTTP com
-keep-alive, `UnicodeCodePoint` offsets pra preservar acentuação correta).
-Pipeline sequencial: regex local primeiro (sub-ms), Language depois no
-body já mascarado. Categorias amplas (default Azure: Person, Address,
-DateTime, Email, PhoneNumber, IPAddress, BRCPFNumber, BRLegalEntityNumber,
-CreditCard, etc.). Tier 2 fail-open, Tier 3 fail-closed.
-
-Eventos audit novos: `pii_detected_remote` (info — quantas categorias
-substituídas), `pii_remote_unavailable` (warn em Tier 2, error em Tier 3).
-
-7 testes de cliente (happy path, no entities, 401, timeout, empty docs,
-out-of-bounds offset, sort descending). Suite 100% verde.
-
-Para ativar: criar secret `AZURE-LANGUAGE-API-KEY` no KV (ver
-[keyvault-setup.md](keyvault-setup.md)), setar `AZURE_LANGUAGE_ENDPOINT`
-no `.env`, descomentar seção `azure_language` no `gateway.yaml`. Quando
-ausente, etapa é skipped silenciosamente.
-
-### Onda 5 — UI (concluída)
-
-Entregue em 4 sub-frentes integradas:
-
-**5A — Form de endpoint Azure com `provider_config`**
-Tipo `ProxyEndpoint.provider_config` no `api.ts`. Form ganha bloco
-"Configuração Azure OpenAI" (aparece quando `provider_kind=azure_openai`)
-com input `api_version` + tabela editável `model → deployment` (add/remove
-linhas). Validação client-side antecipa o 400 do backend e desabilita o
-botão Criar com toast explicativo. Helpers `azureConfigToProviderConfig` +
-`providerConfigToAzureConfig` traduzem entre o shape JSONB e o state do
-form. **Desbloqueia criação de endpoint Azure pela UI** (antes só dava
-via PUT manual no curl/Invoke-RestMethod).
-
-**5B — Playground modo canônico para Azure**
-Quando endpoint selecionado é `azure_openai`: esconde campo path raw,
-mostra dropdown "Model" populado de `provider_config.model_to_deployment`,
-body OpenAI-style auto-gerado com `defaultAzureBody(model)`. Trocar o
-modelo atualiza o campo `"model"` no body sem perder o resto. Endpoints
-`custom` mantêm o modo "raw" (path livre, body livre).
-
-**5C — Alert legível em ambos os temas**
-`components/ui/alert.tsx`: variants `destructive`/`warning`/`success`
-não usam mais `text-*-foreground` (que é a cor de **contraste do
-fundo sólido** e fica errada em fundo `bg-*/10` translúcido). Agora usam
-`text-foreground` (cor de texto principal, theme-aware), mantendo só o
-border e o ícone na cor do variant. Resolve a queixa do modal de Token
-Gerado ilegível no dark mode.
-
-**5D — Modal mais rápida ao abrir**
-`components/ui/dialog.tsx`: removido `backdrop-blur-md` do `DialogContent`
-e trocado `bg-card/95` por `bg-card` (opaco). `duration-200` →
-`duration-150`. Em hardware integrado, backdrop-blur custa ~80-150ms por
-frame durante o open/close — somava como "lag" perceptível. Overlay
-mantém `backdrop-blur-sm` (efeito visual desejado no fundo).
-
-Sem profile real ainda — se persistir, vira frente futura "Profile +
-investigation: modal perf".
+| Bug | Fix |
+|---|---|
+| Token UTF-8 quebrava Postgres SQLSTATE 22021 | Onda 1: `ExtractPrefix` + `deriveKeyPrefix` ASCII-only |
+| `${kv:NAME}` consumido por `os.ExpandEnv` antes do resolver KV | Hotfix Onda 3: `expandEnvPreservingKV` |
+| `api_keys.application_id UNIQUE` bloqueia rotate | Migration 007: UNIQUE parcial `WHERE rotated_at IS NULL` |
+| `TestValidate_ValidConfig` faltava `EncryptionKeyHex` | Fixture atualizada |
+| `chatHandler` test helper sem Maskers → panic | Helper populado com 3 tiers |
 
 ---
 
-## 3. Frentes descobertas durante a Onda 1
+## 2. Em execução
 
-Pequenas/médias, não bloqueantes, surgiram do debugging atual. Vão entrar numa onda futura ou em PRs pequenos avulsos.
+**Onda 6 — Latency Breakdown Observável (ADR-0021)** — código entregue,
+testes/validação ao vivo pendentes. Ver `docs/handoff.md` pra passos
+exatos de retomada amanhã.
 
-### Admin audit
-
-**Causa:** ações administrativas (criar app, criar endpoint, conceder grant, rotacionar chave, login admin) **não emitem eventos**. A página Observability fica vazia até alguém disparar request de chat. Confirmado via `grep` em `internal/api/admin/` e `internal/app/adminservice/`.
-
-**Proposta de escopo:**
-- Decisão de schema (precisa input): estender `audit_events` com colunas opcionais `admin_username`, `target_type`, `target_id` **ou** criar tabela separada `admin_audit_events`. A segunda é mais limpa, a primeira economiza join na UI
-- Eventos novos: `application_created`, `application_updated`, `application_deleted`, `endpoint_created`, `endpoint_updated`, `endpoint_deleted`, `grant_granted`, `grant_revoked`, `key_rotated`, `admin_login`, `admin_logout`, `admin_login_failed`
-- Aba nova "Admin" na página Observability ou merge na aba Auditoria com filtro
-- ADR a discutir
-
-### Validação sistemática de inputs
-
-**Diagnóstico não feito ainda** — surgiu do pedido "valide inputs, consultas, etc etc". Vou auditar todos os handlers admin (`internal/api/admin/handlers/`) e produzir um relatório:
-- Comprimento máximo de cada campo
-- Sanitização de slug (já existe pra endpoint, conferir para app name)
-- Validação de URL em targets
-- Validação de hex hash, prefixes
-- Defesa contra SQL injection (pgx parameter mode já protege, mas verificar 100%)
-
-### Latency breakdown observability
-
-Hoje `usage_events.latency_ms` é só o total. Quando o user reclama de 2.6s, não dá pra saber se foi auth, masking, provider ou serialização. Proposta:
-- Header `X-Gateway-Latency-Breakdown` no response (`auth=2ms;mask=3ms;provider=2580ms;…`)
-- Colunas novas em `usage_events` (`latency_auth_ms`, `latency_pipeline_ms`, `latency_provider_ms`) — opcional, baixa cardinalidade
-- Não medir o que não importa: nada de timer per-middleware (overhead > benefício)
-
-### UX dos filtros de Observability
-
-`web/src/pages/Observability.tsx:89-90` — `from` e `to` são fixados no `useState` inicial e nunca recalculam. Se você abre a página e espera, o filtro "Até" fica congelado. **Correção trivial:** ao clicar Aplicar, recalcular `to = new Date().toISOString()`. Não é bug de timezone — confirmado que migrations usam `TIMESTAMPTZ` corretamente e o front usa `toLocaleString`.
-
-### Fixture quebrada de `TestValidate_ValidConfig`
-
-`internal/config/config_test.go:42` — fail pré-existente (anterior à Onda 1), confirmado via `git stash`. Falta `encryption_key_hex` válido no fixture pós-ADR-0012. Fix trivial: adicionar `EncryptionKeyHex: "0000…"` (64 hex chars) no test data.
-
-### Cleanup de apps órfãs (acompanhamento Onda 1)
-
-Apps cadastradas antes da Onda 1 com chars Unicode no prefix ficam órfãs. Hoje o cleanup é manual via `psql`. Considerar: comando CLI `cmd/admin-tools cleanup-nonascii-prefixes` que faz a query e pede confirmação. Baixa prioridade — provavelmente uma vez na vida.
-
-### Logs do slog assíncronos
-
-Hoje `audit_events`, `usage_events` e `budget_counters` são assíncronos via canal (ADR-0005). Mas o `slog.Logger` direto (start/end/error logs) é síncrono — cada `logger.Info(...)` faz write no stdout dentro da goroutine do handler. Em prod com stdout indo pra arquivo + fsync, vira gargalo acima de ~1k req/s. Solução: handler com buffer + flush em background, ou integração com Loki/Azure Monitor (que já fica na Phase 3, "Observabilidade externa"). Para a demo atual (≤100 req/s) é invisível.
-
-### Compression de payload
-
-- Outbound gateway → cliente: hoje não comprime. Response de chat com histórico pode chegar a 50-200KB; gzip cortaria pra ~10-30KB. Ganho real em conexão mobile/edge.
-- Outbound gateway → Azure: `DisableCompression: false` no transport, mas o Go por padrão só negocia gzip em GET; POST não envia `Accept-Encoding` automaticamente. Azure provavelmente sempre retorna identity.
-- Inbound cliente → gateway: chi não descompacta gzip request body. Se cliente comprimir, gateway quebra silenciosamente.
-
-Frente nova de 1-2h de trabalho. Não bloqueia nada urgente — entra na Phase 3.
-
-### Cache de policy/endpoint lookup
-
-Hoje cada request `/v1/proxy/*` faz `GetBySlug` + `HasGrant` no DB (~2-5ms). Cache LRU+TTL cortaria pra <0.1ms — micro-otimização. Vale quando aparecer pressão real. Phase 3.
+Próximas sugeridas (depois da validação da Onda 6):
+- **Onda 4.5** — Target credentials no Key Vault (§3.3, P1 Segurança)
+- **Cache de lookup** (§3.1, P1 Desempenho)
+- **Streaming Tier 3** (§3.1, P1 Desempenho)
 
 ---
 
-## 4. Phase 3 — Escalabilidade e produção
+## 3. Eixos estratégicos
 
-Itens sem ordem fixa. Cada um é candidato a ADR próprio.
+Cada eixo lista frentes priorizadas e trade-offs. Prioridade é sugestão; ordem real depende do owner.
 
-### Multi-instância
+### 3.1 Desempenho
 
-- **Redis rate limiter** — substitui `golang.org/x/time/rate` in-memory. A interface `ratelimit.Limiter` já existe; basta nova impl
-- **Redis budget cache** — pre-check de budget hoje faz SQL por request; cache com TTL 60s elimina pressão no DB
-- **DB-backed sessões admin** já está em produção (`admin_sessions`) — multi-instance OK pra admin desde já
+**Diagnóstico atual**: latência p50 ~1.7-3.3s pra Tier 2/3, dominada pelo Azure OpenAI (1.5-3s). Gateway adiciona ~150-310ms — principalmente o Azure Language PII (~150-300ms cloud call). Ganhos no gateway são em ordem de dezenas de ms.
 
-### Observabilidade externa
+**Pontos atacáveis (impacto real):**
 
-- **Métricas Prometheus** — `/metrics` com counters/histograms padrão (requests_total, request_duration_seconds, tokens_total, budget_brl_spent, pii_masked_total)
-- **Tracing OpenTelemetry** — `trace_id`/`span_id` nos logs, propagação via `traceparent`, exporter OTLP
-- **Logs estruturados centralizados** — já é JSON com `slog`; falta integrar com algum sink (Loki, Azure Monitor)
+- **P1 — Cache de policy/endpoint/grant lookup** (~5-10ms por request, baixo risco). Cada request hoje faz 2 DB hits pra resolver auth + grant. LRU+TTL em memória elimina ambos no cache hit. Invalidação: TTL curto (30-60s) ou pub/sub se virar multi-instance.
+- **P1 — Streaming permitido em Tier 3**. Hoje bloqueado porque Content Safety não tem stream nativo. Opções: (a) buffer completo do response, CS check, flush — aumenta latência total mas mantém Tier 3 igual; (b) confiar no pré-check de prompt e liberar stream — semântica diferente, exige ADR.
+- **P2 — Azure Language PII em paralelo com regex local**. Decisão da Onda 4 foi sequencial pra Language ver só o que regex perdeu. Em paralelo, latência total = max(local, cloud) ≈ Language sozinho → economiza os <1ms do regex. Trade-off: Language vê texto original (pode duplicar mascaramento). Revisão da decisão ADR-0019.
+- **P2 — Connection warming pra Azure OpenAI**. Pré-abre conexões HTTP/2 no boot — evita TLS handshake de ~50-100ms no primeiro request por target. Simples (warmup goroutine).
+- **✅ Latency breakdown observável (Onda 6, ADR-0021)** — entregue mas pendente de validação ao vivo. Header `X-Gateway-Latency-Breakdown: auth=2;mask=180;guardrails=0;provider=2400;encode=3` + 5 colunas em `usage_events`. Pré-requisito pra defender qualquer afirmação sobre latência com dado real.
+- **P3 — Semantic cache de respostas** (ver §3.7 Escalabilidade pra detalhes). Hash exato do payload (model + messages + temperature + etc.). Cache hit retorna em <10ms sem custo Azure. Trade-offs: complexidade (Redis), invalidação por mudança de modelo, risco de respostas "velhas". Frente grande.
+- **P3 — Compression de payload outbound** (gzip response → cliente). Ajuda banda, não latência. Útil pra clientes mobile/edge. ~1-2h de trabalho. Fora do plano de redução de latência stricto sensu.
 
-### Resiliência
+### 3.2 Auditoria
 
-- **Circuit breaker** por target — abre após N falhas seguidas, half-open com backoff
-- **Retries com jitter** — para erros transientes do provider (5xx, timeout); idempotência só em GET/PUT
-- **Drain mode** — flag operacional para drenar conexões antes de shutdown (Lote F do console)
-- **Health check ativo de targets** — hoje o LB confia que targets estão vivos; ping periódico marca como degraded
+Tudo abaixo escreve em `audit_events` (ou tabela paralela).
 
-### Funcionalidades novas
+- **P1 — Admin audit**. Hoje admin actions (criar app, criar endpoint, conceder grant, rotacionar chave, login/logout) **não emitem nada**. Página Observability fica vazia até alguém disparar request de chat. Decisão pendente: estender `audit_events` com colunas opcionais (`admin_username`, `target_type`, `target_id`) **ou** criar `admin_audit_events` separada. Eventos: `application_created/updated/deleted`, `endpoint_created/updated/deleted`, `grant_granted/revoked`, `key_rotated`, `admin_login/logout/login_failed`.
+- **P2 — Per-target audit**. Qual target específico atendeu cada request (hoje só endpoint é registrado). Útil pra debug de load balancing e provider failover.
+- **P2 — Bootstrap login audit**. CLI `admin-create` deveria registrar a criação do primeiro admin com IP/timestamp.
+- **P3 — Audit imutável em Azure Blob**. Replicar `audit_events` pra storage append-only (LGPD + compliance). Job batch a cada N minutos.
+- **P3 — Retention configurável por categoria** de evento (move pra §3.6 Legalidade).
 
-- **`POST /v1/embeddings`** (e `/v1/proxy/.../embeddings`) — mesmo pipeline de masking
-- **Realtime / Voice Live** — WebSocket, fora do modelo HTTP atual; ADR à parte
-- **Streaming Tier 3** — hoje bloqueado porque Azure CS não tem stream nativo; opção: buffer + check + flush
+### 3.3 Segurança
 
-### Governança / LGPD
+- **P1 — Onda 4.5 — Target credentials no Key Vault**. Resolve a quebra de targets quando `DB_ENCRYPTION_KEY` rotaciona (você viveu isso). Schema: nova coluna `proxy_targets.kv_secret_name TEXT NULL`. Quando preenchida, gateway lê credencial do KV em vez de decifrar AES local. Coexiste com modo legacy via fallback. Migração: CLI `cmd/migrate-targets-to-kv` move targets existentes em batch. Vira **ADR-0020**.
+- **P2 — Validação sistemática de inputs**. Auditoria dos handlers admin (`internal/api/admin/handlers/`): comprimento máximo, sanitização de slug, validação de URL de target, validação de hex, defesa contra SQL injection (pgx parameter mode já cobre — confirmar 100%).
+- **P2 — IP allowlist por aplicação**. Tabela `application_ip_allowlist`. Auth middleware rejeita com 403 se IP origem não está na lista (vazia = permite tudo).
+- **P3 — mTLS upstream opcional**. Target ganha campo `client_cert_pem` cifrado (KV). Transport per-target em vez do shared.
+- **P3 — 2FA TOTP pra admins**. Lote D do console-roadmap.
+- **P3 — Secret rotation automation**. Gateway sabe rotacionar Azure key sem deploy quando KV detecta versão nova.
 
-- **Particionamento mensal** de `usage_events` e `audit_events` + job de retenção
-- **Auditoria imutável** — replicar audit_events para Azure Blob (append-only) ou Event Hub
-- **Relatório de consumo** `/admin/v1/usage/report?period=YYYYMM`
-- **Anonimização** opcional de logs após N dias (mascarar `application_name` em audit antigos)
+### 3.4 Requisitos
 
-### Segurança operacional
+Contratos, validação e padrões de erro.
 
-- **mTLS** entre gateway e backends sensíveis (opcional por endpoint)
-- **IP allowlist** por aplicação (Lote F do console)
-- **2FA opcional** pra admins (Lote D do console)
-- **Webhook + alertas** em thresholds de budget e error rate (Lote E do console)
+- **P2 — Payload size limits configuráveis por endpoint**. Hoje hard-coded em 1MB no chat. Endpoint Azure pode precisar mais; custom genérico pode aceitar menos.
+- **P2 — Error response standardization**. Hoje `/v1/chat/completions` retorna `{"error":{"message":...,"type":...}}` (OpenAI-style) e `/v1/proxy/*` retorna `{"error":{"code":...,"message":...}}`. Decisão de design: unificar ou manter dois (proxy precisa ser passthrough do upstream).
+- **P3 — Request signing opcional** (HMAC) pra apps de alto risco. Headers `X-Gateway-Signature` + `X-Gateway-Timestamp`. Anti-replay com timestamp window.
+- **P3 — Schema validation de body** via JSON Schema declarado no endpoint. Útil pra endpoints custom não-IA.
+
+### 3.5 Dados
+
+Dashboards nativos + retenção.
+
+- **P1 — Nova página Dashboard** com gráficos timeseries. Rota `/ui/dashboard`. Cards/charts (lib **recharts**, leve, sem CDN):
+  - Requests/min nas últimas 24h (timeseries)
+  - Latência p50/p95/p99 por aplicação (timeseries)
+  - Tokens consumidos por modelo (stacked area)
+  - Custo BRL acumulado por aplicação (bar chart)
+  - Top 10 apps por gasto no mês corrente
+  - Distribuição por tier (pie chart)
+  - Taxa de erro (% 4xx/5xx) nas últimas 24h
+  Tudo alimentado das tabelas existentes (`usage_events`, `audit_events`, `budget_counters`) via endpoints `/admin/v1/dashboard/*` novos. Sem Prometheus (decisão explícita do owner: "apenas logs no banco").
+- **P2 — Snapshot diário de KPIs** em tabela agregada (`daily_metrics`). Dashboards leem do agregado em vez de scan de `usage_events` (queries em 30M+ linhas matam latência). Job de boot/cron.
+- **P2 — Export CSV/JSON** de usage/audit/budget por filtro. Lote E do console-roadmap.
+- **P3 — Particionamento mensal** de `usage_events` e `audit_events`. Move pra §3.7 Escalabilidade (impacto operacional).
+
+### 3.6 Legalidade (LGPD / governance)
+
+- **P1 — Retenção configurável** por categoria de evento. Config nova:
+  ```yaml
+  retention:
+    usage_events_days: 365
+    audit_events_days: 730
+    chat_payload_in_audit_days: 30  # se for guardar
+  ```
+  Job de boot + cron deleta linhas expiradas.
+- **P2 — Anonimização automática** após N dias. `application_name` em audit antigo vira hash; `metadata` é redacted. Permite manter agregados sem dados pessoais.
+- **P2 — Right-to-be-forgotten endpoint**. `DELETE /admin/v1/applications/{name}/data` apaga TODOS os registros relacionados àquela app (usage/audit/budget). Audit log da própria deleção (DPO action).
+- **P2 — DPO export endpoint**. `GET /admin/v1/applications/{name}/data-export` retorna JSON com todos os eventos da app no período. Auditável.
+- **P3 — Documento de compliance map**. `docs/lgpd-compliance.md` mapeando que parte do gateway cobre qual artigo da LGPD (Art. 18 portabilidade, Art. 16 eliminação, etc.).
+
+### 3.7 Escalabilidade
+
+Multi-instance + altíssima carga.
+
+- **P1 — Redis rate limiter**. Substitui `golang.org/x/time/rate` in-memory. Interface `ratelimit.Limiter` já existe; basta nova impl. Permite múltiplas réplicas do gateway sem que cada uma tenha seu próprio bucket.
+- **P1 — Redis budget cache**. Pre-check de budget hoje faz query SQL por request. Em alta carga, cria pressão no DB. Cache com TTL 60s elimina.
+- **P2 — Particionamento mensal** de `usage_events` e `audit_events`. Postgres declarative partitioning por `created_at`. Queries em janelas curtas (dashboard 24h) ficam triviais; cleanup é DROP de partição.
+- **P2 — Stateless garantido**. Auditar que nenhum estado fica só no processo além de cache LRU local (que é OK perder em restart). Pré-requisito pra autoscaling.
+- **P2 — DB read replicas + pool tuning**. Connection pool por replica, leitura em replica pra queries de dashboard.
+- **P3 — Semantic cache de respostas** (semantic = hash exato do payload, não embedding). Redis com chave = SHA256(model + messages + temperature + max_tokens + ...). TTL configurável. Cache hit: response em <10ms, custo Azure zero. Trade-offs: invalidação por mudança de versão de modelo (rare), risco de resposta "velha" (mitigado por TTL curto), custo de manutenção do cluster Redis.
+- **P3 — Health checks robustos pra autoscaling**. `/readyz` já existe mas precisa: warmup detection (não responde ready até connection pool estar pronto), drain mode (responde 503 após SIGTERM enquanto drena conexões).
 
 ---
 
-## 5. Visão de longo prazo — gateway genérico não-IA
+## 4. Decisões pendentes
 
-O proxy plane (`/v1/proxy/{slug}/*` com `provider_kind=custom`) já permite cadastrar **qualquer endpoint HTTP**. Hoje é passthrough bruto. Pra virar API gateway corporativo de verdade, faltam capabilities que são **complementares**, não substitutas, do que existe:
+Frentes anotadas mas precisam de definição antes de virar PR.
 
-- **Template engine de path** — `{slug}/users/{id}` no cadastro, cliente chama `/users/42` e gateway traduz pra `https://upstream/api/v2/users/42`
-- **Transformações de request/response declarativas** — adicionar headers, renomear campos JSON, mapear status codes, sem código
-- **Rate limit / quota por endpoint × app × verbo** — hoje é por app só
-- **Cache de response** com TTL e invalidation por header/path
-- **Mock mode por endpoint** — útil pra contratos antes do backend existir
-- **Versionamento de endpoint** — `/v1/proxy/{slug}` vs `/v2/proxy/{slug}` com config diferente
+### 4.1 Desacoplamento do frontend (separação de repos)
 
-Nenhum desses está em planejamento ainda — anotados aqui só pra deixar o vetor de evolução explícito.
+**Pedido do owner**: tirar `web/` do repo do gateway, virar projeto próprio, deploy independente (CDN/S3/Vercel). Gateway expulsa o `go:embed dist`. Cliente puro REST.
+
+**O que precisa ser definido:**
+- Como o frontend descobre o endpoint do gateway? (env var no build? config runtime?)
+- Como tratar CORS? Hoje o gateway aceita `localhost:5173` em dev — em prod precisa configurar via env
+- Versionamento independente: frontend pode estar à frente/atrás do schema da API. Como negociar?
+- Deploy: GitHub Pages, S3 + CloudFront, Vercel, Cloudflare Pages — escolher uma e documentar
+- Repo: monorepo separado ou repo fresh? Histórico migra ou começa do zero?
+
+**Trade-offs:**
+- (+) Deploy do frontend não bloqueia release do gateway e vice-versa
+- (+) Frontend pode ter sua própria CI (TypeScript-only, mais rápida)
+- (+) Backend perde 460KB de bundle embedado — binário Go fica menor
+- (-) Operação cresce: dois repos, dois pipelines, dois deploys
+- (-) Em ambiente single-server, perde a vantagem do binário único que o ADR-0014 buscava
+
+**Recomendação minha**: virar ADR-0021 quando virar prioridade. Sem urgência hoje.
+
+### 4.2 Observabilidade externa (Prometheus / OpenTelemetry)
+
+Owner foi explícito: **fora do escopo agora** ("apenas logs no banco"). Mantido aqui só pra referência futura — quando precisar de SLOs/alertas externos, será uma frente nova.
+
+### 4.3 Cache de prompts (semantic cache)
+
+Decisão do owner: **hash exato** (não embedding). Já listado em §3.7 como P3 com escopo detalhado. Definição do que falta:
+- Tier do cache: por endpoint? por aplicação? global?
+- TTL default
+- Headers de cache control (`Cache-Control: no-cache` força bypass?)
+- Métricas: hit rate, savings em $/mês
 
 ---
 
-## 6. Backlog técnico (não funcional)
+## 5. Backlog técnico
 
-- [ ] `go test -coverprofile` e meta de cobertura > 80% nos pacotes com lógica de negócio
-- [ ] CI/CD (GitHub Actions): lint + test + build + push pra ACR em cada merge
-- [ ] Testes de integração contra Postgres real (`testcontainers-go` ou banco de CI)
-- [ ] Testes de contrato SSE (validar chunks contra schema OpenAI)
+Itens não funcionais. Não bloqueiam features, mas reduzem dívida.
+
+- [ ] `go test -coverprofile`, meta > 80% nos pacotes com lógica de negócio
+- [ ] CI/CD GitHub Actions (lint + test + build + push ACR)
+- [ ] `testcontainers-go` pra testes contra Postgres real
+- [ ] Testes de contrato SSE (chunks vs schema OpenAI)
 - [ ] Load test (`k6` ou `vegeta`) com Azure real
-- [ ] Lint customizado bloqueando `unicode.IsLetter`/`IsDigit` em contextos onde a saída vai pra Postgres `text` (regressão da Onda 1)
+- [ ] Lint customizado bloqueando `unicode.IsLetter`/`IsDigit` em contexto que escreve em coluna `text` (regressão da Onda 1)
 - [ ] CHANGELOG.md auto-gerado a partir do git log com conventional commits
+
+---
+
+## 6. Histórico de ondas
+
+Ondas entregues indexadas pelos ADRs que decidiram cada uma.
+
+| Onda | Tema | ADR principal | Status |
+|---|---|---|---|
+| 1 | Hardening de tokens ASCII | (sem ADR — bugfix) | ✅ |
+| 2 | Path translation por `provider_kind` | ADR-0017 | ✅ |
+| 3 | Azure Key Vault como provider de segredos | ADR-0018 | ✅ |
+| 4 | Azure AI Language PII | ADR-0019 | ✅ |
+| 5 | UI: form Azure + playground canônico + catálogo + alert/dialog | (sem ADR — UI) | ✅ |
+| 6 | Latency breakdown observável | ADR-0021 | ✅ código; ⏳ validação |
+| 4.5 | Target credentials no Key Vault | ADR-0020 a fazer | ⏳ planejada |
+
+ADRs livres a partir de **0022**.

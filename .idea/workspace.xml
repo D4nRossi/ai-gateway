@@ -5,26 +5,12 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/.env.example" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cmd/gateway/main.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/gateway/main.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/configs/gateway.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/configs/gateway.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/console-roadmap.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/console-roadmap.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/how-it-works.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/how-it-works.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/keyvault-setup.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/keyvault-setup.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/roadmap.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/roadmap.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/internal/api/handlers/chat.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/api/handlers/chat.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/audit/event.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/audit/event.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/config/config.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/config/config.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/tiers/engine.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/tiers/engine.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/tiers/engine_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/tiers/engine_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/web/dist/.gitkeep" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/web/src/components/ui/alert.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/web/src/components/ui/alert.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/web/src/components/ui/dialog.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/web/src/components/ui/dialog.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/web/src/lib/api.ts" beforeDir="false" afterPath="$PROJECT_DIR$/web/src/lib/api.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/web/src/pages/Endpoints.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/web/src/pages/Endpoints.tsx" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/web/src/pages/Playground.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/web/src/pages/Playground.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/usage/event.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/usage/event.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/usage/writer.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/usage/writer.go" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

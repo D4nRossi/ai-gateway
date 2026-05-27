@@ -21,8 +21,15 @@ type Emitter interface {
 
 // UsageEvent captures per-request token consumption and latency.
 //
+// LatencyMs is the total wall time of the request; the Lat*Ms fields below
+// decompose it by pipeline bucket (ADR-0021). All Lat*Ms default to 0 and
+// are persisted as NULL when 0 — the writer treats 0 as "not instrumented"
+// so legacy callers that don't populate them don't dirty the new columns
+// with zeros that look like measurements.
+//
 // References:
 //   - SPEC.md §5.4
+//   - ADR-0021 — latency breakdown observável
 type UsageEvent struct {
 	RequestID        string
 	ApplicationName  string
@@ -36,4 +43,14 @@ type UsageEvent struct {
 	StatusCode       int
 	EstimatedCostBRL float64
 	CreatedAt        time.Time
+
+	// Per-bucket breakdown of LatencyMs (ADR-0021). 0 means "not instrumented"
+	// and is stored as NULL in usage_events. Callers that instrument should
+	// populate all 5 fields, even if some buckets are 0 (Tier 1 has no
+	// guardrails, etc.).
+	LatAuthMs       int
+	LatMaskMs       int
+	LatGuardrailsMs int
+	LatProviderMs   int
+	LatEncodeMs     int
 }

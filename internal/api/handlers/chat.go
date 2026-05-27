@@ -74,6 +74,12 @@ func Chat(deps ChatDeps) http.HandlerFunc {
 		ctx := r.Context()
 		start := time.Now()
 
+		// Latency breakdown trace (ADR-0021). Five buckets accumulated by
+		// Mark calls between steps; emitted as header + persisted in
+		// usage_events. Doesn't measure work done by upstream middlewares
+		// (auth, request_id) — that ends up in "other" (latency_ms - sum).
+		trace := observability.StartTrace()
+
 		rid, _ := ctx.Value(observability.RequestIDKey).(string)
 		reqLogger := observability.LoggerFrom(ctx, deps.Logger)
 
@@ -113,6 +119,10 @@ func Chat(deps ChatDeps) http.HandlerFunc {
 		}
 
 		// ── 3. Tier pipeline ──────────────────────────────────────────────────
+		// Mark "auth" — all work up to here (body decode, policy checks,
+		// model allowlist verification) counts as request setup/auth.
+		trace.Mark("auth")
+
 		pipe := tiers.PipelineFor(policy.Tier)
 
 		if pipe.RunLocalMasking {
@@ -205,6 +215,9 @@ func Chat(deps ChatDeps) http.HandlerFunc {
 			}
 		}
 
+		// Mark "mask" — both regex local + Azure Language are masking work.
+		trace.Mark("mask")
+
 		if pipe.RunLocalInjection {
 			scanner := promptshield.NewLocalScanner()
 			if scanner.DetectInjection(concatMessages(req.Messages)) {
@@ -273,6 +286,13 @@ func Chat(deps ChatDeps) http.HandlerFunc {
 			}
 		}
 
+		// Mark "guardrails" — injection scan + Prompt Shield + Content Safety
+		// all live in this bucket. Note: a request that's blocked early in
+		// guardrails (e.g. injection_detected) returns before reaching the
+		// usage emit below, so its breakdown never lands in usage_events.
+		// That's by design — only completed requests get persisted breakdown.
+		trace.Mark("guardrails")
+
 		// ── 4. Budget pre-check ───────────────────────────────────────────────
 		if err := deps.BudgetCheck.Check(ctx, policy.Name, policy.MonthlyBudgetBRL); err != nil {
 			deps.AuditWriter.Emit(audit.AuditEvent{
@@ -293,9 +313,9 @@ func Chat(deps ChatDeps) http.HandlerFunc {
 
 		// ── 5+. Dispatch to streaming or non-streaming path ───────────────────
 		if req.Stream {
-			deps.handleStream(w, r, req, modelCfg, policy, rid, start, reqLogger)
+			deps.handleStream(w, r, req, modelCfg, policy, rid, start, reqLogger, trace)
 		} else {
-			deps.handleNonStream(w, r, req, modelCfg, pipe, policy, rid, start, reqLogger)
+			deps.handleNonStream(w, r, req, modelCfg, pipe, policy, rid, start, reqLogger, trace)
 		}
 	}
 }
@@ -305,6 +325,7 @@ func (d *ChatDeps) handleNonStream(
 	req providers.ChatCompletionRequest, modelCfg config.ModelConfig,
 	pipe tiers.Pipeline, policy auth.AppPolicy,
 	rid string, start time.Time, reqLogger *slog.Logger,
+	trace *observability.LatencyTrace,
 ) {
 	ctx := r.Context()
 
@@ -353,6 +374,10 @@ func (d *ChatDeps) handleNonStream(
 		}
 	}
 
+	// Mark "provider" — provider call + post-validation finished. Headers
+	// + JSON encode go in "encode" below.
+	trace.Mark("provider")
+
 	// ── 7. Emit usage + budget ────────────────────────────────────────────────
 	inputTok, outputTok, totalTok := 0, 0, 0
 	if resp.Usage != nil {
@@ -360,8 +385,18 @@ func (d *ChatDeps) handleNonStream(
 		outputTok = resp.Usage.CompletionTokens
 		totalTok = resp.Usage.TotalTokens
 	}
-	latencyMs := int(time.Since(start).Milliseconds())
 	costBRL := estimateCost(modelCfg, inputTok, outputTok)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Gateway-Latency-Breakdown", trace.Header())
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+
+	// Mark "encode" AFTER the write so the bucket reflects the actual cost
+	// of marshaling + flushing. Note: latencyMs total is computed last so
+	// it captures encode too.
+	trace.Mark("encode")
+	latencyMs := int(time.Since(start).Milliseconds())
 
 	d.UsageWriter.Emit(usage.UsageEvent{
 		RequestID: rid, ApplicationName: policy.Name,
@@ -369,20 +404,22 @@ func (d *ChatDeps) handleNonStream(
 		InputTokens: inputTok, OutputTokens: outputTok, TotalTokens: totalTok,
 		LatencyMs: latencyMs, StatusCode: http.StatusOK,
 		EstimatedCostBRL: costBRL, CreatedAt: time.Now().UTC(),
+		LatAuthMs:       trace.Bucket("auth"),
+		LatMaskMs:       trace.Bucket("mask"),
+		LatGuardrailsMs: trace.Bucket("guardrails"),
+		LatProviderMs:   trace.Bucket("provider"),
+		LatEncodeMs:     trace.Bucket("encode"),
 	})
 	d.BudgetCount.Record(budget.UpdateEvent{
 		ApplicationName: policy.Name, TotalTokens: totalTok, EstimatedCostBRL: costBRL,
 	})
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (d *ChatDeps) handleStream(
 	w http.ResponseWriter, r *http.Request,
 	req providers.ChatCompletionRequest, modelCfg config.ModelConfig,
 	policy auth.AppPolicy, rid string, start time.Time, reqLogger *slog.Logger,
+	trace *observability.LatencyTrace,
 ) {
 	ctx := r.Context()
 
@@ -396,6 +433,12 @@ func (d *ChatDeps) handleStream(
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
+	// The breakdown header for streams is emitted upfront with current
+	// (incomplete) values. By the time the client reads it, "provider" and
+	// "encode" will be 0 — they're populated during the stream loop and
+	// persisted in usage_events at the end. This is a known limitation of
+	// SSE: response headers go out before the body starts streaming.
+	w.Header().Set("X-Gateway-Latency-Breakdown", trace.Header())
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
 
@@ -454,6 +497,13 @@ func (d *ChatDeps) handleStream(
 		flusher.Flush()
 	}
 
+	// In the streaming path, "provider" covers the entire chunk loop above
+	// (open + iterate + flush). "encode" is effectively merged into provider
+	// because each chunk is encoded+flushed immediately as it arrives —
+	// separating the two would require microsecond-level instrumentation
+	// per chunk, which costs more than it informs.
+	trace.Mark("provider")
+
 	// ── Emit usage + budget after stream completes ────────────────────────────
 	inputTok, outputTok, totalTok := 0, 0, 0
 	if lastUsage != nil {
@@ -480,6 +530,11 @@ func (d *ChatDeps) handleStream(
 		InputTokens: inputTok, OutputTokens: outputTok, TotalTokens: totalTok,
 		LatencyMs: latencyMs, StatusCode: http.StatusOK,
 		EstimatedCostBRL: costBRL, CreatedAt: time.Now().UTC(),
+		LatAuthMs:       trace.Bucket("auth"),
+		LatMaskMs:       trace.Bucket("mask"),
+		LatGuardrailsMs: trace.Bucket("guardrails"),
+		LatProviderMs:   trace.Bucket("provider"),
+		LatEncodeMs:     trace.Bucket("encode"),
 	})
 	d.BudgetCount.Record(budget.UpdateEvent{
 		ApplicationName: policy.Name, TotalTokens: totalTok, EstimatedCostBRL: costBRL,
