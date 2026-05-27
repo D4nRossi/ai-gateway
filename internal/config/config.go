@@ -300,11 +300,39 @@ func resolveKVRefs(ctx context.Context, yaml string, secrets SecretResolver) (st
 	}
 
 	// Replace in a single pass — ReplaceAllStringFunc reads the regex output,
-	// looks up the captured name in subs, and substitutes the value.
+	// looks up the captured name in subs, and substitutes the value wrapped in
+	// YAML single quotes.
+	//
+	// Reasoning: bare scalar substitution corrompe o parse quando o segredo
+	// contém qualquer um dos caracteres reservados do YAML — `#` (início de
+	// comentário quando seguido de espaço), `!` (tag indicator), `@` e `` ` ``
+	// (reserved), `:` (separador key:value), `[]{}` (flow style), `&*` (anchor
+	// / alias), `|>` (block scalars), `?` (complex key marker), espaços líderes
+	// etc. Senhas reais frequentemente contêm vários desses.
+	//
+	// YAML single-quoted strings têm a propriedade mais simples possível: TODO
+	// caractere literal é aceito, EXCETO o próprio apóstrofo, que precisa ser
+	// duplicado. Forçando aspas simples na substituição, qualquer secret é
+	// armazenado como string opaca e o tipo nunca colide com YAML booleans
+	// (`yes`, `no`, `on`, `off`) ou numbers — comportamento desejado para
+	// segredos.
+	//
+	// Limitação conhecida: newlines literais (`\n`) num secret sofrem YAML
+	// line folding e viram espaço. Senhas e API keys realistas não têm
+	// newlines, então essa limitação é aceitável; secrets multiline exigiriam
+	// double-quoted style com escape adicional (`\` e `"`) e ficam fora do
+	// escopo aqui. Coberto por TestResolveKVRefs_SpecialCharactersInSecret.
+	//
+	// Pré-condição: o `${kv:NAME}` no YAML deve ser bare scalar (sem aspas em
+	// volta). Como a convenção do gateway.yaml é exatamente essa, há zero
+	// regressão. Se um dia alguém escrever `password: "${kv:NAME}"`, a
+	// substituição resultaria em `password: "'valor'"` (string literal com
+	// aspas) — pegamos isso em revisão.
 	out := kvRefRe.ReplaceAllStringFunc(yaml, func(match string) string {
 		sub := kvRefRe.FindStringSubmatch(match)
 		// sub[0] is the full match, sub[1] is the capture group (NAME).
-		return subs[sub[1]]
+		val := subs[sub[1]]
+		return "'" + strings.ReplaceAll(val, "'", "''") + "'"
 	})
 	return out, nil
 }

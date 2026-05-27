@@ -5,7 +5,15 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+// yamlUnmarshal é só um wrapper pra tornar a chamada nos testes mais legível
+// e localizada — o alias evita import-cycling com nomes ambíguos.
+func yamlUnmarshal(in string, out any) error {
+	return yaml.Unmarshal([]byte(in), out)
+}
 
 // fakeResolver is an in-memory SecretResolver for tests. Counts Get calls
 // per name so we can assert deduplication.
@@ -68,9 +76,69 @@ func TestResolveKVRefs_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := "a: foo-value\nb: bar-value\n"
+	// Valores são sempre envolvidos em YAML single quotes — defesa contra
+	// caracteres reservados (#, !, @, :, etc.) em secrets reais. Ver
+	// TestResolveKVRefs_SpecialCharactersInSecret pra cobertura desse caso.
+	want := "a: 'foo-value'\nb: 'bar-value'\n"
 	if out != want {
 		t.Errorf("got %q; want %q", out, want)
+	}
+}
+
+// TestResolveKVRefs_SpecialCharactersInSecret é o regression test pro bug
+// (2026-05-27) onde uma senha com `!@#` fazia o YAML parser truncar o valor
+// no `#` (interpretando como comentário) ou rejeitar `!`/`@` (tag/reserved
+// indicators). A fix envolve cada valor substituído em single quotes do YAML,
+// que aceitam qualquer caractere literal exceto o próprio apóstrofo (que é
+// duplicado).
+func TestResolveKVRefs_SpecialCharactersInSecret(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		secret string
+	}{
+		{"hash sign", "MyPass#123"},
+		{"hash with space", "My Pass # 123"},
+		{"tag indicator", "!Strong@Pass"},
+		{"reserved at", "user@host!123"},
+		{"flow style chars", "[strange]{value}"},
+		{"colon and dash", "key:value-here"},
+		{"yaml keyword booleans", "yes"},
+		// Newline literal (`\n`) é caso patológico — YAML single-quoted faz
+		// line folding e converte newlines em espaço. Senhas reais não têm
+		// newline; documentado como limitação conhecida no resolveKVRefs.
+		{"single apostrophe", "it's secret"},
+		{"double apostrophes", "it''s secret"},
+		{"all hell mixed", "!@#$%^&*()-_=+[]{};:\",./<>?\\|`~"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := &fakeResolver{
+				values: map[string]string{"SECRET": tc.secret},
+				calls:  map[string]int{},
+			}
+			in := "password: ${kv:SECRET}\n"
+			out, err := resolveKVRefs(context.Background(), in, r)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			// Decodifica o resultado via yaml.Unmarshal pra confirmar que o
+			// valor sobrevive o round-trip sem corrupção.
+			var parsed struct {
+				Password string `yaml:"password"`
+			}
+			if err := yamlUnmarshal(out, &parsed); err != nil {
+				t.Fatalf("YAML parse falhou pro secret %q (substituído como %q): %v", tc.secret, out, err)
+			}
+			if parsed.Password != tc.secret {
+				t.Errorf("round-trip alterou secret\n  in:  %q\n  yaml: %q\n  out: %q", tc.secret, out, parsed.Password)
+			}
+		})
 	}
 }
 
