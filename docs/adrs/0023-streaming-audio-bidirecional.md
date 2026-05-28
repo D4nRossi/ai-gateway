@@ -1,11 +1,40 @@
 # ADR-0023: Streaming bidirecional de áudio (pipeline híbrido)
 
-- **Status**: proposed
+- **Status**: rejected
 - **Date**: 2026-05-27
+- **Rejection date**: 2026-05-28
 - **Decision makers**: Daniel (owner)
 - **Consulted**: Claude Opus 4.7
 - **Supersedes**: nenhum
 - **Sub-onda mapping**: 8.0 (este documento) → 8.1 → 8.2 → 8.3 → 8.4 → 8.5
+
+## Rejection note (2026-05-28)
+
+Streaming de voz fica **out of scope** do AI Gateway. Razão: gateway é
+desenhado pro paradigma HTTP request-response síncrono (auth bearer, rate
+por RPM/TPM, PII regex em texto, budget em tokens). Áudio bidirecional
+WebSocket quebra todos esses pressupostos — frames de áudio não são
+"tokens", RPM perde sentido em sessão long-lived, PII em áudio bruto só é
+mascarável post-hoc na transcrição.
+
+Voz fica como responsabilidade da aplicação cliente (que centraliza
+áudio/VAD/interrupt/função calling). Gateway permanece focado em IA texto
++ endpoints proxy genéricos.
+
+Considerou-se uma "Opção D" híbrida (control plane no gateway: token
+exchange, audit ingest, budget; data plane bypass: app conecta WebSocket
+direto no Voice Live). Owner rejeitou também — não compensa a complexidade
+adicional.
+
+O conteúdo abaixo permanece como registro arquitetural — útil pra próxima
+vez que alguém propuser trazer streaming pro gateway.
+
+Referências afetadas pela rejeição:
+- `_voicelive-spike/` removido. Baseline medido: 404ms média / 571ms p95
+  no modo Pure (este número fica preservado no Context abaixo).
+- `roadmap.md`: Onda 8 movida pra histórico como rejected.
+
+---
 
 ## Context
 
@@ -669,8 +698,8 @@ Cada sub-onda fecha uma etapa do pipeline e é commit\ável independentemente.
 - POC TPCore.Modules.AgentFlow `Realtime/PureVoiceLiveSessionRuntime.cs` (referência do modo Pure, ~1000 LOC C#)
 - POC TPCore.Modules.AgentFlow `Realtime/VoiceLiveRuntimeMode.cs` (lógica de seleção de modo)
 - POC TPCore.Modules.AgentFlow `Providers/AzureVoiceLiveProvider.cs`, `ElevenLabsTtsProvider.cs`, `AzureOpenAiStreamingProvider.cs`
-- Spike Go: `_voicelive-spike/` (3 arquivos, ~500 LOC) — proxy WS minimal pra Voice Live, mediu baseline
-- Spike analysis: `_voicelive-spike/POC_ANALYSIS.md` (comparação detalhada com a POC)
+- Spike Go: `_voicelive-spike/` (3 arquivos, ~500 LOC) — proxy WS minimal pra Voice Live, mediu baseline (removido em 2026-05-28 junto com a rejeição)
+- Spike analysis: `_voicelive-spike/POC_ANALYSIS.md` (comparação detalhada com a POC) (removido em 2026-05-28)
 - Doc Voice Live API: https://learn.microsoft.com/en-us/azure/ai-services/speech-service/voice-live
 - Doc Voice Live how-to: https://learn.microsoft.com/en-us/azure/ai-services/speech-service/voice-live-how-to
 - Doc Voice Live customize: https://learn.microsoft.com/en-us/azure/ai-services/speech-service/voice-live-how-to-customize

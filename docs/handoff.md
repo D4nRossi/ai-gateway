@@ -79,12 +79,16 @@ M  internal/usage/writer.go                             (Onda 6)
 3. `spike(voice-live): cliente isolado para baseline de latência` — `_voicelive-spike/` inteiro
 4. `docs: atualizar roadmap (Onda 8), how-it-works (pós-SQL Server) e handoff` — docs/* atualizados
 
-### Próxima ação amanhã (Ubuntu notebook)
+### Próxima ação (Ubuntu notebook)
 
-1. **Ler ADR-0023** no `docs/adrs/0023-streaming-audio-bidirecional.md` (owner ainda não leu)
-2. Decidir se aprova o escopo Opção C (replicar pipeline completo, 2-3 meses) ou ajusta
-3. Se aprovar: iniciar **Sub-onda 8.1** — proxy Pure Voice Live no gateway (foundation, ~2 semanas)
-4. Se quiser ajustar escopo: editar o ADR-0023 (status fica `proposed` até aceitar)
+1. **Desbloquear ambiente:** instalar `az` CLI + conectar VPN + `az login`
+   (tenant `c050c98c-b463-4591-ac3b-deb782c0ba6e`). Sem isso o gateway não boota.
+2. **Iniciar Onda 4.5 — Target credentials no Key Vault** (ADR-0020 a redigir).
+   Resolve quebra de targets quando `DB_ENCRYPTION_KEY` rotaciona. Escopo
+   detalhado em `roadmap.md §3.3`.
+3. **Voice Live (Onda 8) foi rejeitada** em 2026-05-28 — ver ADR-0023 e
+   `roadmap.md §6`. Streaming de voz fica como responsabilidade da app
+   cliente, não do gateway.
 
 ### Frentes pendentes (sem ETA específica)
 

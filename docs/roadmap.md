@@ -71,17 +71,21 @@ Tudo abaixo está em produção no branch `v2`.
 
 ## 2. Em execução
 
-**Próxima onda (P1):** **Onda 8 — Streaming de áudio via Azure Voice Live**
-(ADR-0023 a fazer). Frente longa, latência-crítica. Spike técnico antes do
-desenho. Escopo completo em §3.1.
+**Próxima onda (P1):** **Onda 4.5 — Target credentials no Key Vault**
+(ADR-0020 a fazer). Resolve quebra de targets quando `DB_ENCRYPTION_KEY`
+rotaciona. Desbloqueada após Onda 7. Escopo completo em §3.3.
 
 **Pendentes planejadas (sem ordem fixa, owner decide):**
-- **Onda 4.5** — Target credentials no Key Vault (§3.3, P1 Segurança — antes
-  bloqueada pela troca de banco; agora desbloqueada)
 - **SSO Entra ID / OIDC** (§3.3, P1 Segurança — remove `gogateway.admin_users.root`)
 - **Modelos como CRUD + Page Models** (§3.4, P2 Requisitos — unifica YAML/DB)
 - **Cache de lookup** (§3.1, P1 Desempenho)
 - **Streaming Tier 3 (HTTP SSE)** — diferente de streaming de áudio (§3.1)
+
+**Out of scope (rejeitado):**
+- ~~**Onda 8 — Streaming de áudio bidirecional via Voice Live**~~ — rejeitado
+  em 2026-05-28 ([ADR-0023](adrs/0023-streaming-audio-bidirecional.md)).
+  Voz fica como responsabilidade da app cliente; gateway permanece IA texto
+  + proxy genérico.
 
 ---
 
@@ -95,23 +99,7 @@ Cada eixo lista frentes priorizadas e trade-offs. Prioridade é sugestão; ordem
 
 **Pontos atacáveis (impacto real):**
 
-- **P1 — Onda 8 — Streaming de áudio bidirecional via Azure Voice Live** (ADR-0023 a fazer). Frente extensa, latência-crítica. O owner deixou explícito: "latência é problema enorme nisso, precisamos da menor possível, vários trade-offs serão apresentados — sempre o menos pior". Sub-frentes e trade-offs em discussão:
-  - **Transporte:** WebSocket bidirecional passthrough (não REST chunked). Voice Live é stateful; HTTP REST quebraria a sessão. Gateway atua como proxy WebSocket transparente — TLS terminado, mas o frame binário passa intacto.
-  - **Codec:** passthrough total dos bytes do áudio. Re-encodar (PCM↔Opus) no gateway adiciona 50-100ms por frame, inaceitável. O gateway não decodifica/transcreve nada.
-  - **Auth:** bearer validado no upgrade WebSocket apenas. Revalidação mid-stream quebra UX (cortes inexplicáveis). Bearer expirar mid-call é problema operacional do app cliente, não do gateway.
-  - **Content Safety:** delegado ao Voice Live (que tem CS embutido pro modo de fala). Gateway **audita as decisões** que Voice Live tomou (logged via stream events), mas não duplica chamada paralela — cada hop adicional inflama latência.
-  - **Latency breakdown:** os buckets do ADR-0021 não aplicam a stream contínuo. Schema novo: tabela `gogateway.audio_sessions` (id, application_name, started_at, ended_at, audio_seconds_in, audio_seconds_out, voice_minutes_billed, first_audio_ms, disconnect_reason, estimated_cost_brl). ADR-0023 define schema.
-  - **Tier de segurança:** permitir áudio em todos os tiers; tier influencia política de gravação de transcript e retenção (Tier 3 = não grava). Bloquear áudio em Tier 3 seria over-engineering.
-  - **Tools / function calls:** fora do MVP — frente própria depois. Voice Live suporta, mas o gateway lidando com tool_calls em pipeline de áudio é complexo.
-  - **Multi-instance / scale:** 1 gateway aguenta ~1k conexões WebSocket simultâneas em VM modesta. Sharding por aplicação fica pra escalabilidade futura (§3.7).
-  - **Sequência sugerida:**
-    1. Spike técnico (1-2 dias): cliente isolado falando Voice Live direto, mede latency baseline (first-audio, RTT por frame).
-    2. Proxy WebSocket mínimo (gateway pass-through): mede overhead adicionado. Target <30ms p95.
-    3. Auth + audit de sessão (audio_session_started/ended).
-    4. Schema `audio_sessions` + usage tracking por sessão.
-    5. Tier policy (allowed_voices? max_minutes_per_session?).
-    6. CS audit passthrough das decisões do Voice Live.
-  - **ADR-0023 a redigir** quando virar execução. Cobre transporte, codec, schema, política, cancelation.
+- ~~**P1 — Onda 8 — Streaming de áudio bidirecional via Azure Voice Live**~~ — **rejeitado em 2026-05-28** ([ADR-0023](adrs/0023-streaming-audio-bidirecional.md)). Mantido aqui como referência de "considerado e descartado". Voz fica como responsabilidade da aplicação cliente; gateway permanece IA texto + proxy genérico. Para casos de voz, a otimização de latência segue na app, não no gateway.
 
 - **P1 — Cache de policy/endpoint/grant lookup** (~5-10ms por request, baixo risco). Cada request hoje faz 2 DB hits pra resolver auth + grant. LRU+TTL em memória elimina ambos no cache hit. Invalidação: TTL curto (30-60s) ou pub/sub se virar multi-instance.
 - **P1 — Streaming permitido em Tier 3**. Hoje bloqueado porque Content Safety não tem stream nativo. Opções: (a) buffer completo do response, CS check, flush — aumenta latência total mas mantém Tier 3 igual; (b) confiar no pré-check de prompt e liberar stream — semântica diferente, exige ADR.
@@ -319,7 +307,7 @@ Ondas entregues indexadas pelos ADRs que decidiram cada uma.
 | 6 | Latency breakdown observável | ADR-0021 | ✅ código; ⏳ validação ao vivo (interrompida pela Onda 7) |
 | 7 | Troca emergencial PostgreSQL → SQL Server (schema gogateway) | ADR-0022 | ✅ **accepted** (smoke test passou 2026-05-27) |
 | 4.5 | Target credentials no Key Vault | ADR-0020 a fazer | ⏳ planejada (desbloqueada após Onda 7) |
-| 8 | Streaming de áudio bidirecional (pipeline híbrido — Voice Live STT + Azure OpenAI LLM + ElevenLabs TTS) | ADR-0023 a fazer | ⏳ **execução em sub-ondas 8.0–8.5** (ver tabela abaixo). Owner escolheu Opção C em 2026-05-27 após análise da POC TPCore.Modules.AgentFlow |
+| 8 | Streaming de áudio bidirecional (Voice Live + LLM + TTS) | ADR-0023 | ❌ **rejected** (2026-05-28) — out of scope; voz fica na app cliente |
 | (sem nº) | SSO Entra ID / OIDC | ADR-0024 a fazer | ⏳ planejada (depende de App Registration no Entra) |
 | (sem nº) | Modelos como CRUD + Page Models | ADR-0025 a fazer? | ⏳ planejada |
 | (sem nº) | Segregação hot/warm path | (avaliar) | ⏳ adiar até hot path sangrar |
@@ -334,41 +322,12 @@ Ondas entregues indexadas pelos ADRs que decidiram cada uma.
 - Suite verde (vet/build/test-race) ao fim do código; smoke test passou em 2026-05-27 contra BRSPVPDEV003. ADR-0022 marcado `accepted`.
 - Fixes capturados durante o smoke: migration 005 (deferred name resolution via EXEC), KV resolver (envolver valores em single quotes pra suportar `!@#`), driver mssqldb (provider_config como string pra evitar VARBINARY coercion). Doc no commit relevante.
 
-**Notas sobre a Onda 8 (streaming áudio Voice Live, próxima P1)**:
-- Trigger: owner tem subscription Voice Live e quer usar como provider via gateway.
-- Latência é problema número 1. Decisões serão de "menos pior" (owner explícito).
-- Spike técnico (`_voicelive-spike/`) executado em 2026-05-27, comprovou
-  latência sub-segundo no modo Pure (404ms média, 571ms p95 medidos).
-- Análise da POC TPCore.Modules.AgentFlow em
-  `_voicelive-spike/POC_ANALYSIS.md`: voz natural exige modo Hybrid
-  (Voice Live STT + LLM próprio + ElevenLabs TTS). Modo Pure sozinho
-  entrega voz Azure standard reconhecidamente robótica.
-- Owner escolheu Opção C (replicar pipeline completo) em 2026-05-27.
-  Escopo estimado: 2-3 meses focado, decomposto em 5 sub-ondas
-  (ver tabela "Decomposição da Onda 8" logo abaixo).
-- Schema novo `gogateway.audio_sessions` (não reutiliza `usage_events`).
-- ADR-0023 cobre: transporte (WebSocket bidirecional stateful), modos
-  Pure/Hybrid selecionáveis, schema DB, schema de eventos JSON entre
-  cliente e gateway, política de tier, observability, state machine
-  por sessão. TTS provider default: **ElevenLabs** (espelha a POC).
+**Notas sobre a Onda 8 (rejeitada)**:
+- Onda 8 (streaming áudio Voice Live) foi escopada e rejeitada em 2026-05-28.
+  Decisão do owner: voz não é responsabilidade do gateway. Ver ADR-0023.
+- Spike `_voicelive-spike/` foi removido junto. Medições do spike (404ms
+  média / 571ms p95 no modo Pure) preservadas no Context do ADR-0023.
+- ADRs subordinados que estavam previstos (ADR-0024 TTS provider, ADR-0025
+  schema de agentes, ADR-0026 frontend audio transport) ficam sem efeito.
 
-### Decomposição da Onda 8
-
-Cada sub-onda é fech\ável e commitada independentemente. 8.1 sozinha já
-agrega valor (proxy auditado de Voice Live).
-
-| Sub-onda | Tema | Estimativa | Entrega checkpoint |
-|---|---|---|---|
-| **8.0** | ADR-0023 redigido + aprovado | 1-2 dias | Documento arquitetural completo |
-| **8.1** | Proxy Pure Voice Live no gateway | 2 semanas | Cliente fala com gateway via WS, gateway proxia Voice Live, audit em `gogateway.audio_sessions`. Voz Azure standard (robótica, mas funcional). |
-| **8.2** | Modo Hybrid: Voice Live STT + Azure OpenAI LLM + ElevenLabs TTS | 3-4 semanas | Voz natural via ElevenLabs. Streaming text→audio. Schema de provider config por aplicação. |
-| **8.3** | Fillers semânticos + barge-in + containment | 1-2 semanas | Latência percebida sub-1s. Detecção de cenários (acceptance, hold, price objection, etc.). |
-| **8.4** | Frontend cliente (web ou mobile) | 1-2 semanas | UI que captura áudio do mic, abre WS com gateway, toca áudio do agente. |
-| **8.5** | Polimento + observability + load tests | 1 semana | Métricas em dashboard, alertas, perf testing multi-sessão. |
-
-ADRs subordinados que podem ser necessários durante execução:
-- ADR-0024: TTS provider abstraction + escolha ElevenLabs vs Cartesia
-- ADR-0025: Schema de agentes/personalidade/fillers no DB (se 8.3 demandar)
-- ADR-0026: Frontend audio transport (WebSocket cliente nativo vs WebRTC) — frente da 8.4
-
-ADRs livres a partir de **0023**.
+ADRs livres a partir de **0024** (ADR-0023 ocupa o slot mesmo rejeitado).
