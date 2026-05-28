@@ -4,16 +4,7 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="">
-      <change beforePath="$PROJECT_DIR$/.idea/ai-gateway.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/ai-gateway.iml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/cmd/gateway/main.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/gateway/main.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/domain/endpoint/endpoint.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/domain/endpoint/endpoint.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/infra/keyvault/client.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/infra/keyvault/client.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/infra/keyvault/client_test.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/infra/keyvault/client_test.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/infra/mssql/endpointrepo.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/infra/mssql/endpointrepo.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/proxy/handler.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/proxy/handler.go" afterDir="false" />
-    </list>
+    <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="feat(backend): Onda 4.5 backend + CLI" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -221,5 +212,9 @@
         <option value="$PROJECT_DIR$/web/node_modules/tailwindcss/stubs/tailwind.config.cjs" />
       </list>
     </option>
+  </component>
+  <component name="VcsManagerConfiguration">
+    <MESSAGE value="feat(backend): Onda 4.5 backend + CLI" />
+    <option name="LAST_COMMIT_MESSAGE" value="feat(backend): Onda 4.5 backend + CLI" />
   </component>
 </project>
