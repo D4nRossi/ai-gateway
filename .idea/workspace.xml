@@ -4,7 +4,19 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="feat(backend): Onda 4.5 backend + CLI" />
+    <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="feat(backend): completa Onda 4.5 — migration 011 + resolver + CLI + ADR-002">
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cmd/gateway/main.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/gateway/main.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/adrs/0020-target-credentials-no-key-vault.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/adrs/0020-target-credentials-no-key-vault.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/handoff.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/handoff.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/roadmap.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/roadmap.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/api/admin/handlers/endpoints.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/api/admin/handlers/endpoints.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/api/admin/router.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/api/admin/router.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/app/adminservice/service.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/app/adminservice/service.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/migrations/011_proxy_targets_kv_credential_mode.up.sql" beforeDir="false" afterPath="$PROJECT_DIR$/migrations/011_proxy_targets_kv_credential_mode.up.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/web/src/lib/api.ts" beforeDir="false" afterPath="$PROJECT_DIR$/web/src/lib/api.ts" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/web/src/pages/EndpointDetail.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/web/src/pages/EndpointDetail.tsx" afterDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -215,6 +227,7 @@
   </component>
   <component name="VcsManagerConfiguration">
     <MESSAGE value="feat(backend): Onda 4.5 backend + CLI" />
-    <option name="LAST_COMMIT_MESSAGE" value="feat(backend): Onda 4.5 backend + CLI" />
+    <MESSAGE value="feat(backend): completa Onda 4.5 — migration 011 + resolver + CLI + ADR-002" />
+    <option name="LAST_COMMIT_MESSAGE" value="feat(backend): completa Onda 4.5 — migration 011 + resolver + CLI + ADR-002" />
   </component>
 </project>

@@ -32,15 +32,19 @@ type targetAuthRequest struct {
 
 // targetResponse is the JSON representation of a Target.
 // Auth credentials are NOT included in list/get responses — they are encrypted at rest
-// and never returned to the caller after initial creation (ADR-0012).
+// and never returned to the caller after initial creation (ADR-0012). The
+// credential_storage_mode + kv_secret_name pair (ADR-0020) lets the UI show
+// where the credential actually lives without ever returning the value.
 type targetResponse struct {
-	ID         int64  `json:"id"`
-	EndpointID int64  `json:"endpoint_id"`
-	URL        string `json:"url"`
-	Weight     int    `json:"weight"`
-	AuthType   string `json:"auth_type"`
-	Active     bool   `json:"active"`
-	CreatedAt  string `json:"created_at"`
+	ID                    int64  `json:"id"`
+	EndpointID            int64  `json:"endpoint_id"`
+	URL                   string `json:"url"`
+	Weight                int    `json:"weight"`
+	AuthType              string `json:"auth_type"`
+	CredentialStorageMode string `json:"credential_storage_mode"`
+	KVSecretName          string `json:"kv_secret_name,omitempty"`
+	Active                bool   `json:"active"`
+	CreatedAt             string `json:"created_at"`
 }
 
 // endpointResponse is the JSON representation of a ProxyEndpoint.
@@ -67,14 +71,22 @@ type endpointResponse struct {
 }
 
 func toTargetResponse(t endpoint.Target) targetResponse {
+	mode := string(t.CredentialStorageMode)
+	if mode == "" {
+		// Surface the implicit AES default explicitly so clients don't have
+		// to branch on missing field vs literal "aes".
+		mode = string(endpoint.CredentialModeAES)
+	}
 	return targetResponse{
-		ID:         t.ID,
-		EndpointID: t.EndpointID,
-		URL:        t.URL,
-		Weight:     t.Weight,
-		AuthType:   string(t.Auth.Type),
-		Active:     t.Active,
-		CreatedAt:  t.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
+		ID:                    t.ID,
+		EndpointID:            t.EndpointID,
+		URL:                   t.URL,
+		Weight:                t.Weight,
+		AuthType:              string(t.Auth.Type),
+		CredentialStorageMode: mode,
+		KVSecretName:          t.KVSecretName,
+		Active:                t.Active,
+		CreatedAt:             t.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"),
 	}
 }
 
@@ -142,18 +154,38 @@ type updateEndpointRequest struct {
 }
 
 // addTargetRequest is the JSON body for POST /admin/v1/endpoints/{id}/targets.
+//
+// credential_storage_mode + kv_secret_name (ADR-0020) are optional. Empty
+// mode is treated as "aes" (status quo). When set to "kv" or "both" the
+// repository persists kv_secret_name but does NOT push the credential to
+// the vault — that flow goes through POST .../migrate-to-kv.
 type addTargetRequest struct {
-	URL    string            `json:"url"`
-	Weight int               `json:"weight"`
-	Auth   targetAuthRequest `json:"auth"`
+	URL                   string            `json:"url"`
+	Weight                int               `json:"weight"`
+	Auth                  targetAuthRequest `json:"auth"`
+	CredentialStorageMode string            `json:"credential_storage_mode,omitempty"`
+	KVSecretName          string            `json:"kv_secret_name,omitempty"`
 }
 
 // updateTargetRequest is the JSON body for PUT /admin/v1/endpoints/{id}/targets/{targetID}.
+// Same ADR-0020 fields as addTargetRequest.
 type updateTargetRequest struct {
-	URL    string            `json:"url"`
-	Weight int               `json:"weight"`
-	Auth   targetAuthRequest `json:"auth"`
-	Active bool              `json:"active"`
+	URL                   string            `json:"url"`
+	Weight                int               `json:"weight"`
+	Auth                  targetAuthRequest `json:"auth"`
+	Active                bool              `json:"active"`
+	CredentialStorageMode string            `json:"credential_storage_mode,omitempty"`
+	KVSecretName          string            `json:"kv_secret_name,omitempty"`
+}
+
+// migrateTargetRequest is the JSON body for
+// POST /admin/v1/endpoints/{id}/targets/{targetID}/migrate-to-kv.
+//
+// secret_name is optional — when empty the service generates
+// "gateway-target-{uuid_v7}". mode must be "kv" or "both".
+type migrateTargetRequest struct {
+	Mode       string `json:"mode"`
+	SecretName string `json:"secret_name,omitempty"`
 }
 
 // ListEndpoints handles GET /admin/v1/endpoints.
@@ -343,10 +375,12 @@ func AddTarget(svc *adminservice.Service) http.HandlerFunc {
 		}
 
 		t := endpoint.Target{
-			EndpointID: epID,
-			URL:        req.URL,
-			Weight:     req.Weight,
-			Auth:       authFromRequest(req.Auth),
+			EndpointID:            epID,
+			URL:                   req.URL,
+			Weight:                req.Weight,
+			Auth:                  authFromRequest(req.Auth),
+			CredentialStorageMode: endpoint.CredentialStorageMode(req.CredentialStorageMode),
+			KVSecretName:          req.KVSecretName,
 		}
 
 		created, err := svc.AddTarget(r.Context(), t)
@@ -379,11 +413,13 @@ func UpdateTarget(svc *adminservice.Service) http.HandlerFunc {
 		}
 
 		t := endpoint.Target{
-			ID:     targetID,
-			URL:    req.URL,
-			Weight: req.Weight,
-			Auth:   authFromRequest(req.Auth),
-			Active: req.Active,
+			ID:                    targetID,
+			URL:                   req.URL,
+			Weight:                req.Weight,
+			Auth:                  authFromRequest(req.Auth),
+			Active:                req.Active,
+			CredentialStorageMode: endpoint.CredentialStorageMode(req.CredentialStorageMode),
+			KVSecretName:          req.KVSecretName,
 		}
 
 		updated, err := svc.UpdateTarget(r.Context(), t)
@@ -393,6 +429,70 @@ func UpdateTarget(svc *adminservice.Service) http.HandlerFunc {
 				return
 			}
 			writeAdminError(w, http.StatusInternalServerError, "internal", "failed to update target")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, toTargetResponse(updated))
+	}
+}
+
+// MigrateTargetToKV handles POST /admin/v1/endpoints/{id}/targets/{targetID}/migrate-to-kv.
+//
+// Moves the target's credential from AES at-rest to Azure Key Vault, switching
+// credential_storage_mode to "kv" (KV is authoritative; AES cleared) or "both"
+// (KV authoritative; AES kept as freshness cache). The credential itself is
+// never returned in the response.
+//
+// Error mapping:
+//   - ErrKVUnavailable          → 503 (gateway booted without KEYVAULT_URI)
+//   - ErrTargetAlreadyMigrated  → 409 (target is not in mode=aes)
+//   - ErrTargetHasNoCredential  → 400 (auth_type=none, nothing to migrate)
+//   - ErrInvalidKVSecretName    → 400 (operator-supplied name fails the regex)
+//   - endpoint.ErrNotFound      → 404
+//
+// References:
+//   - ADR-0020 — credential storage mode per target
+func MigrateTargetToKV(svc *adminservice.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		epID, ok := parseID(w, r, "id")
+		if !ok {
+			return
+		}
+		targetID, ok := parseID(w, r, "targetID")
+		if !ok {
+			return
+		}
+
+		var req migrateTargetRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeAdminError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+			return
+		}
+
+		updated, err := svc.MigrateTargetToKV(
+			r.Context(), epID, targetID,
+			endpoint.CredentialStorageMode(req.Mode), req.SecretName,
+		)
+		if err != nil {
+			switch {
+			case errors.Is(err, adminservice.ErrKVUnavailable):
+				writeAdminError(w, http.StatusServiceUnavailable, "kv_unavailable",
+					"key vault not configured; set KEYVAULT_URI and restart the gateway")
+			case errors.Is(err, adminservice.ErrTargetAlreadyMigrated):
+				writeAdminErrorWithDetails(w, http.StatusConflict, "already_migrated",
+					"target credential is not in aes mode", err.Error())
+			case errors.Is(err, adminservice.ErrTargetHasNoCredential):
+				writeAdminError(w, http.StatusBadRequest, "no_credential",
+					"target has auth_type=none; nothing to migrate")
+			case errors.Is(err, adminservice.ErrInvalidKVSecretName):
+				writeAdminErrorWithDetails(w, http.StatusBadRequest, "invalid_secret_name",
+					"kv secret name must match [A-Za-z0-9-]{1,127}", err.Error())
+			case errors.Is(err, endpoint.ErrNotFound):
+				writeAdminError(w, http.StatusNotFound, "not_found", "endpoint or target not found")
+			default:
+				writeAdminErrorWithDetails(w, http.StatusInternalServerError,
+					"internal", "failed to migrate target credential", err.Error())
+			}
 			return
 		}
 

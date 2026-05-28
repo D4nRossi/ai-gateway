@@ -1,7 +1,8 @@
 # ADR-0020: Target credentials com modo de armazenamento por target (AES / KV / Both)
 
-- **Status**: proposed
+- **Status**: accepted
 - **Date**: 2026-05-28
+- **Implementation date**: 2026-05-28 (mesmo dia — escopo enxuto, fechado em uma sessão)
 - **Decision makers**: Daniel (owner)
 - **Consulted**: Claude Opus 4.7
 - **Supersedes**: nenhum

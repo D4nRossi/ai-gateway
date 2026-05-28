@@ -13,6 +13,14 @@
 -- migração compulsória. CLI cmd/migrate-targets-to-kv promove target a
 -- target quando o KV estiver pronto.
 --
+-- T-SQL gotcha: scripts diretos NÃO têm deferred name resolution. O batch
+-- inteiro é parseado/name-resolved ANTES de executar — combinar `ALTER TABLE
+-- ADD column` com um `CREATE INDEX` que referencia essa coluna no mesmo
+-- batch causa "Invalid column name". Mesmo problema visto na migration 005
+-- (commit aeed6f3); a fix é envolver o `CREATE INDEX` em `EXEC(N'...')`:
+-- a string SQL só é parseada quando o EXEC roda, momento em que a coluna
+-- já existe.
+--
 -- References:
 --   - ADR-0020 — modo de armazenamento de credenciais por target
 --   - ADR-0012 — AES-256-GCM para credenciais at-rest (mantida)
@@ -32,13 +40,14 @@ END;
 
 -- Index parcial: lookup operacional ("quais targets usam o secret X?").
 -- Filtered porque a maioria dos rows tem kv_secret_name NULL (default 'aes').
+-- EXEC() force-deferes a name resolution pra DEPOIS do ALTER TABLE acima.
 IF NOT EXISTS (
     SELECT 1 FROM sys.indexes
      WHERE name = 'idx_proxy_targets_kv_secret_name'
        AND object_id = OBJECT_ID('gogateway.proxy_targets')
 )
 BEGIN
-    CREATE INDEX idx_proxy_targets_kv_secret_name
+    EXEC(N'CREATE INDEX idx_proxy_targets_kv_secret_name
         ON gogateway.proxy_targets(kv_secret_name)
-        WHERE kv_secret_name IS NOT NULL;
+        WHERE kv_secret_name IS NOT NULL');
 END;

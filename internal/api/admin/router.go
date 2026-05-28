@@ -117,6 +117,7 @@ func NewRouter(deps Deps) http.Handler {
 			r.Delete("/v1/endpoints/{id}", adminhandlers.DeleteEndpoint(deps.Svc))
 			r.Post("/v1/endpoints/{id}/targets", adminhandlers.AddTarget(deps.Svc))
 			r.Put("/v1/endpoints/{id}/targets/{targetID}", adminhandlers.UpdateTarget(deps.Svc))
+			r.Post("/v1/endpoints/{id}/targets/{targetID}/migrate-to-kv", adminhandlers.MigrateTargetToKV(deps.Svc))
 			r.Delete("/v1/endpoints/{id}/targets/{targetID}", adminhandlers.RemoveTarget(deps.Svc))
 		})
 

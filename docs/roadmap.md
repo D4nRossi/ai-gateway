@@ -71,9 +71,9 @@ Tudo abaixo está em produção no branch `v2`.
 
 ## 2. Em execução
 
-**Próxima onda (P1):** **Onda 4.5 — Target credentials no Key Vault**
-(ADR-0020 a fazer). Resolve quebra de targets quando `DB_ENCRYPTION_KEY`
-rotaciona. Desbloqueada após Onda 7. Escopo completo em §3.3.
+**Próxima onda (P1):** a decidir — Onda 4.5 (target credentials no Key Vault)
+foi entregue em 2026-05-28 (ADR-0020 accepted; ver §6 histórico). Owner
+escolhe entre as pendentes planejadas abaixo.
 
 **Pendentes planejadas (sem ordem fixa, owner decide):**
 - **SSO Entra ID / OIDC** (§3.3, P1 Segurança — remove `gogateway.admin_users.root`)
@@ -122,7 +122,7 @@ Tudo abaixo escreve em `audit_events` (ou tabela paralela).
 
 ### 3.3 Segurança
 
-- **P1 — Onda 4.5 — Target credentials no Key Vault**. Resolve a quebra de targets quando `DB_ENCRYPTION_KEY` rotaciona (você viveu isso). Schema: nova coluna `proxy_targets.kv_secret_name TEXT NULL`. Quando preenchida, gateway lê credencial do KV em vez de decifrar AES local. Coexiste com modo legacy via fallback. Migração: CLI `cmd/migrate-targets-to-kv` move targets existentes em batch. Vira **ADR-0020**.
+- **✅ Onda 4.5 — Target credentials no Key Vault** (entregue 2026-05-28, ADR-0020 accepted). Schema novo: `proxy_targets.credential_storage_mode {aes|kv|both}` + `kv_secret_name`. Default `aes` (zero migração compulsória). Modo `both`: KV primário com timeout 200 ms + fallback AES cifrado. CLI `cmd/migrate-targets-to-kv` + endpoint admin `POST /admin/v1/endpoints/{id}/targets/{tid}/migrate-to-kv` + botão UI "Migrar para Key Vault" no detalhe do endpoint. 14 testes table-driven do resolver passando.
 - **P1 — Dívida: rotacionar secrets da POC TPCore.Modules.AgentFlow**. Em
   2026-05-27, durante a análise da POC pra Onda 8, o `appsettings.json` da
   POC apareceu no chat com **8 secrets em texto plano** (VoiceLive eus2 +
@@ -306,7 +306,7 @@ Ondas entregues indexadas pelos ADRs que decidiram cada uma.
 | 5 | UI: form Azure + playground canônico + catálogo + alert/dialog | (sem ADR — UI) | ✅ |
 | 6 | Latency breakdown observável | ADR-0021 | ✅ código; ⏳ validação ao vivo (interrompida pela Onda 7) |
 | 7 | Troca emergencial PostgreSQL → SQL Server (schema gogateway) | ADR-0022 | ✅ **accepted** (smoke test passou 2026-05-27) |
-| 4.5 | Target credentials no Key Vault | ADR-0020 a fazer | ⏳ planejada (desbloqueada após Onda 7) |
+| 4.5 | Target credentials no Key Vault (mode por target: aes/kv/both) | ADR-0020 | ✅ **accepted** (2026-05-28) |
 | 8 | Streaming de áudio bidirecional (Voice Live + LLM + TTS) | ADR-0023 | ❌ **rejected** (2026-05-28) — out of scope; voz fica na app cliente |
 | (sem nº) | SSO Entra ID / OIDC | ADR-0024 a fazer | ⏳ planejada (depende de App Registration no Entra) |
 | (sem nº) | Modelos como CRUD + Page Models | ADR-0025 a fazer? | ⏳ planejada |

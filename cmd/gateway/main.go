@@ -169,7 +169,8 @@ func run() error {
 	appRepo := mssqlinfra.NewApplicationRepo(dbHandle)
 	endpointRepo := mssqlinfra.NewEndpointRepo(dbHandle, encrypter)
 
-	adminSvc := adminservice.New(appRepo, endpointRepo, adminRepo, logger, 0)
+	adminSvc := adminservice.New(appRepo, endpointRepo, adminRepo, logger, 0).
+		WithKVSetter(kvClient) // nil when KEYVAULT_URI is unset (ADR-0020)
 
 	adminRouter := adminapi.NewRouter(adminapi.Deps{
 		Svc:    adminSvc,

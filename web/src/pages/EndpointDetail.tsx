@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  KeyRound,
   Loader2,
   MoreHorizontal,
   Pencil,
@@ -55,6 +56,7 @@ import {
   errMessage,
   type Application,
   type AuthType,
+  type CredentialStorageMode,
   type ProxyEndpoint,
   type Target,
   type TargetAuthInput,
@@ -322,6 +324,7 @@ function TargetsPanel({
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Target | null>(null);
   const [removing, setRemoving] = useState<Target | null>(null);
+  const [migrating, setMigrating] = useState<Target | null>(null);
 
   return (
     <Card>
@@ -349,6 +352,7 @@ function TargetsPanel({
                 <TableHead>URL</TableHead>
                 <TableHead>Peso</TableHead>
                 <TableHead>Auth</TableHead>
+                <TableHead>Storage</TableHead>
                 <TableHead>Status</TableHead>
                 <TableHead className="w-[60px]" />
               </TableRow>
@@ -362,6 +366,9 @@ function TargetsPanel({
                     <Badge variant="outline" className="font-mono text-[10px]">
                       {t.auth_type}
                     </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <CredentialStorageBadge target={t} />
                   </TableCell>
                   <TableCell>
                     {t.active ? (
@@ -382,6 +389,13 @@ function TargetsPanel({
                           <Pencil className="h-4 w-4" />
                           Editar
                         </DropdownMenuItem>
+                        {t.credential_storage_mode === "aes" &&
+                          t.auth_type !== "none" && (
+                            <DropdownMenuItem onSelect={() => setMigrating(t)}>
+                              <KeyRound className="h-4 w-4" />
+                              Migrar para Key Vault
+                            </DropdownMenuItem>
+                          )}
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
                           variant="destructive"
@@ -412,6 +426,16 @@ function TargetsPanel({
         onSaved={() => {
           setAdding(false);
           setEditing(null);
+          onChanged();
+        }}
+      />
+
+      <MigrateTargetDialog
+        endpointId={ep.id}
+        target={migrating}
+        onClose={() => setMigrating(null)}
+        onMigrated={() => {
+          setMigrating(null);
           onChanged();
         }}
       />
@@ -671,6 +695,145 @@ function TargetFormDialog({
             </Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Credential storage badge + migrate-to-KV dialog (ADR-0020) ──────────────
+
+/**
+ * Compact pill showing where the target's credential lives. The tooltip-style
+ * "title" attribute exposes the KV secret name when applicable so operators
+ * can find it in the Azure Portal without opening the target details.
+ */
+function CredentialStorageBadge({ target }: { target: Target }) {
+  const mode = target.credential_storage_mode;
+  switch (mode) {
+    case "kv":
+      return (
+        <Badge variant="outline" className="font-mono text-[10px]" title={target.kv_secret_name}>
+          <KeyRound className="h-3 w-3" />
+          KV
+        </Badge>
+      );
+    case "both":
+      return (
+        <Badge variant="outline" className="font-mono text-[10px]" title={target.kv_secret_name}>
+          <KeyRound className="h-3 w-3" />
+          KV + AES
+        </Badge>
+      );
+    case "aes":
+    default:
+      return (
+        <Badge variant="muted" className="font-mono text-[10px]">
+          AES
+        </Badge>
+      );
+  }
+}
+
+/**
+ * Confirma a migração de credencial AES → Key Vault. Pergunta o modo de
+ * destino (kv puro ou both com fallback) e aceita um nome de secret opcional.
+ * O backend gera `gateway-target-{uuid_v7}` quando o campo fica vazio.
+ *
+ * Restrições enforced pelo backend (espelhadas na UI pra UX rápida):
+ *  - Apenas targets em mode=aes podem ser migrados (botão só aparece nesse caso).
+ *  - Nome custom precisa de [A-Za-z0-9-]{1,127} — mesma regra do Azure KV.
+ */
+function MigrateTargetDialog({
+  endpointId,
+  target,
+  onClose,
+  onMigrated,
+}: {
+  endpointId: number;
+  target: Target | null;
+  onClose: () => void;
+  onMigrated: () => void;
+}) {
+  const [mode, setMode] = useState<Extract<CredentialStorageMode, "kv" | "both">>("both");
+  const [secretName, setSecretName] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (target) {
+      setMode("both");
+      setSecretName("");
+    }
+  }, [target]);
+
+  async function onMigrate() {
+    if (!target) return;
+    setSubmitting(true);
+    try {
+      await api.migrateTargetToKV(endpointId, target.id, {
+        mode,
+        secret_name: secretName.trim() === "" ? undefined : secretName.trim(),
+      });
+      toast.success("Credencial migrada para o Key Vault");
+      onMigrated();
+    } catch (err) {
+      toast.error(errMessage(err, "Falha ao migrar credencial"));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Dialog open={target !== null} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Migrar credencial para o Key Vault</DialogTitle>
+          <DialogDescription>
+            A credencial atual será serializada (JSON) e gravada no Azure Key Vault
+            configurado no boot. <strong>both</strong> mantém uma cópia AES como
+            fallback de leitura (200 ms timeout no KV); <strong>kv</strong> remove
+            a cópia AES.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label>Modo de armazenamento</Label>
+            <Select
+              value={mode}
+              onValueChange={(v) => setMode(v as Extract<CredentialStorageMode, "kv" | "both">)}
+              disabled={submitting}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="both">both — KV + AES fallback</SelectItem>
+                <SelectItem value="kv">kv — somente Key Vault</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2">
+            <Label>Nome do secret no KV (opcional)</Label>
+            <Input
+              value={secretName}
+              onChange={(e) => setSecretName(e.target.value)}
+              placeholder="gateway-target-{uuid_v7} (auto)"
+              disabled={submitting}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Vazio → o gateway gera <code>gateway-target-{"{uuid_v7}"}</code>. Custom
+              precisa de <code>[A-Za-z0-9-]</code>, até 127 chars.
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={submitting}>
+            Cancelar
+          </Button>
+          <Button onClick={onMigrate} disabled={submitting}>
+            {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
+            Migrar
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

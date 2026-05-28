@@ -22,18 +22,22 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/D4nRossi/ai-gateway/internal/domain/admin"
 	"github.com/D4nRossi/ai-gateway/internal/domain/application"
 	"github.com/D4nRossi/ai-gateway/internal/domain/endpoint"
+	"github.com/D4nRossi/ai-gateway/internal/infra/keyvault"
 )
 
 const (
@@ -80,6 +84,11 @@ type Service struct {
 	admins     admin.Repository
 	logger     *slog.Logger
 	sessionTTL time.Duration
+
+	// kvSetter is optional. Non-nil enables MigrateTargetToKV (ADR-0020).
+	// Wire via WithKVSetter from cmd/gateway after the Key Vault client is
+	// initialized; remains nil when KEYVAULT_URI is unset (V1 dev setup).
+	kvSetter keyvault.SecretSetter
 }
 
 // New constructs a Service. sessionTTL controls how long admin sessions stay valid;
@@ -104,6 +113,18 @@ func New(
 		logger:     logger,
 		sessionTTL: sessionTTL,
 	}
+}
+
+// WithKVSetter installs the Key Vault writer used by MigrateTargetToKV. The
+// Service may be constructed without it (KEYVAULT_URI unset); migrations will
+// surface a clear error instead of silently no-oping.
+//
+// References:
+//   - ADR-0020 — credential storage mode per target
+//   - ADR-0018 — Key Vault client lifecycle
+func (s *Service) WithKVSetter(kv keyvault.SecretSetter) *Service {
+	s.kvSetter = kv
+	return s
 }
 
 // ── Authentication ────────────────────────────────────────────────────────────
@@ -495,6 +516,130 @@ func (s *Service) RemoveTarget(ctx context.Context, targetID int64) error {
 		return fmt.Errorf("removing target id=%d: %w", targetID, err)
 	}
 	return nil
+}
+
+// ── Target credential migration (ADR-0020) ───────────────────────────────────
+
+// ErrKVUnavailable is returned by MigrateTargetToKV when the Service was
+// constructed without WithKVSetter — typically because KEYVAULT_URI was empty
+// at boot. Handlers map this to HTTP 503.
+var ErrKVUnavailable = errors.New("key vault not configured")
+
+// ErrTargetAlreadyMigrated is returned when MigrateTargetToKV is invoked
+// against a target whose credential_storage_mode is not "aes". Handlers map
+// this to HTTP 409 Conflict (the operation is idempotent in spirit but the
+// caller needs to know it was a no-op).
+var ErrTargetAlreadyMigrated = errors.New("target credential is not in aes mode")
+
+// ErrTargetHasNoCredential is returned when MigrateTargetToKV is invoked
+// against a target whose auth_type is "none" — there is nothing to move
+// to the Key Vault. Handlers map this to HTTP 400.
+var ErrTargetHasNoCredential = errors.New("target has no credential to migrate")
+
+// ErrInvalidKVSecretName is returned when the operator supplies a custom
+// kv_secret_name that does not satisfy Azure Key Vault's naming rules
+// (alphanumeric and hyphen, 1-127 chars).
+var ErrInvalidKVSecretName = errors.New("invalid kv secret name")
+
+// kvSecretNamePattern mirrors the same regexp used by cmd/migrate-targets-to-kv.
+// Kept in sync manually — both paths must reject the same set of names.
+var kvSecretNamePattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,127}$`)
+
+// MigrateTargetToKV moves a target's credential from AES at-rest to Key Vault,
+// switching credential_storage_mode to "kv" or "both" and recording the secret
+// name (ADR-0020).
+//
+// Flow:
+//  1. Loads the endpoint and finds the target (refuses if it isn't already
+//     in mode "aes").
+//  2. Serializes the decrypted TargetAuth and writes it to the vault under
+//     secretName (or a generated "gateway-target-{uuid_v7}" when empty).
+//  3. Persists the new mode + kv_secret_name. When mode == "kv" the AES copy
+//     is cleared (the repository sees AuthNone and writes NULL).
+//
+// Reasoning: handler maps the sentinel errors to HTTP codes. Service does the
+// orchestration so the same logic powers both the admin UI button and the
+// (existing) CLI cmd/migrate-targets-to-kv — though the CLI currently
+// re-implements this path to stay self-contained for ops scripts.
+func (s *Service) MigrateTargetToKV(ctx context.Context, endpointID, targetID int64, mode endpoint.CredentialStorageMode, secretName string) (endpoint.Target, error) {
+	if s.kvSetter == nil {
+		return endpoint.Target{}, fmt.Errorf("migrating target id=%d: %w", targetID, ErrKVUnavailable)
+	}
+	if mode != endpoint.CredentialModeKV && mode != endpoint.CredentialModeBoth {
+		return endpoint.Target{}, fmt.Errorf(`mode %q invalid: expected %q or %q`, mode, endpoint.CredentialModeKV, endpoint.CredentialModeBoth)
+	}
+
+	ep, err := s.endpoints.Get(ctx, endpointID)
+	if err != nil {
+		return endpoint.Target{}, fmt.Errorf("loading endpoint id=%d: %w", endpointID, err)
+	}
+
+	var t endpoint.Target
+	found := false
+	for _, tt := range ep.Targets {
+		if tt.ID == targetID {
+			t = tt
+			found = true
+			break
+		}
+	}
+	if !found {
+		return endpoint.Target{}, fmt.Errorf("target id=%d in endpoint id=%d: %w", targetID, endpointID, endpoint.ErrNotFound)
+	}
+
+	currentMode := t.CredentialStorageMode
+	if currentMode == "" {
+		currentMode = endpoint.CredentialModeAES
+	}
+	if currentMode != endpoint.CredentialModeAES {
+		return endpoint.Target{}, fmt.Errorf("target id=%d in mode %q: %w", targetID, currentMode, ErrTargetAlreadyMigrated)
+	}
+	if t.Auth.Type == endpoint.AuthNone {
+		return endpoint.Target{}, fmt.Errorf("target id=%d: %w", targetID, ErrTargetHasNoCredential)
+	}
+
+	name := strings.TrimSpace(secretName)
+	if name == "" {
+		u, err := uuid.NewV7()
+		if err != nil {
+			return endpoint.Target{}, fmt.Errorf("generating UUID v7 for target id=%d: %w", targetID, err)
+		}
+		name = "gateway-target-" + u.String()
+	}
+	if !kvSecretNamePattern.MatchString(name) {
+		return endpoint.Target{}, fmt.Errorf("kv secret name %q: %w", name, ErrInvalidKVSecretName)
+	}
+
+	payload, err := json.Marshal(t.Auth)
+	if err != nil {
+		return endpoint.Target{}, fmt.Errorf("marshalling target auth for id=%d: %w", targetID, err)
+	}
+	if err := s.kvSetter.Set(ctx, name, string(payload)); err != nil {
+		return endpoint.Target{}, fmt.Errorf("writing credential to key vault for target id=%d: %w", targetID, err)
+	}
+
+	t.CredentialStorageMode = mode
+	t.KVSecretName = name
+	if mode == endpoint.CredentialModeKV {
+		// Repository sees AuthNone and persists NULL in auth_config_enc,
+		// removing the AES copy entirely.
+		t.Auth = endpoint.TargetAuth{Type: endpoint.AuthNone}
+	}
+
+	updated, err := s.endpoints.UpdateTarget(ctx, t)
+	if err != nil {
+		return endpoint.Target{}, fmt.Errorf("persisting migrated target id=%d: %w", targetID, err)
+	}
+
+	s.logger.Info("target credential migrated",
+		"event_type", "target_credential_migrated",
+		"endpoint_id", endpointID,
+		"target_id", targetID,
+		"mode_before", string(endpoint.CredentialModeAES),
+		"mode_after", string(mode),
+		"kv_secret_name", name,
+	)
+	return updated, nil
 }
 
 // ListEndpointGrants returns every proxy endpoint an application has been

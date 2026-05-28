@@ -185,12 +185,29 @@ export interface RotateKeyResponse {
   key_prefix: string;
 }
 
+/**
+ * CredentialStorageMode determines where the upstream credential lives
+ * (ADR-0020). Default `aes` preserves the pre-Wave 4.5 behavior.
+ *
+ *   - `aes`  → credential decrypted from auth_config_enc at load time
+ *   - `kv`   → credential fetched from Key Vault per-request (200 ms timeout)
+ *   - `both` → KV authoritative; auth_config_enc kept as fallback cache
+ */
+export type CredentialStorageMode = "aes" | "kv" | "both";
+
 export interface Target {
   id: number;
   endpoint_id: number;
   url: string;
   weight: number;
   auth_type: AuthType;
+  /**
+   * Always populated by the backend — even legacy rows are normalized to
+   * "aes" in the response (see toTargetResponse).
+   */
+  credential_storage_mode: CredentialStorageMode;
+  /** Empty when credential_storage_mode === "aes". */
+  kv_secret_name?: string;
   active: boolean;
   created_at: string;
 }
@@ -385,7 +402,13 @@ export const api = {
   },
   addTarget(
     endpointId: number,
-    input: { url: string; weight: number; auth: TargetAuthInput },
+    input: {
+      url: string;
+      weight: number;
+      auth: TargetAuthInput;
+      credential_storage_mode?: CredentialStorageMode;
+      kv_secret_name?: string;
+    },
   ): Promise<Target> {
     return request(`/admin/v1/endpoints/${endpointId}/targets`, {
       method: "POST",
@@ -400,6 +423,8 @@ export const api = {
       weight: number;
       auth: TargetAuthInput;
       active: boolean;
+      credential_storage_mode?: CredentialStorageMode;
+      kv_secret_name?: string;
     },
   ): Promise<Target> {
     return request(`/admin/v1/endpoints/${endpointId}/targets/${targetId}`, {
@@ -410,6 +435,24 @@ export const api = {
   removeTarget(endpointId: number, targetId: number): Promise<void> {
     return request(`/admin/v1/endpoints/${endpointId}/targets/${targetId}`, {
       method: "DELETE",
+    });
+  },
+  /**
+   * Migrates an AES-backed target credential to Azure Key Vault. The credential
+   * is pushed to the vault, and the row's credential_storage_mode flips to
+   * `kv` (AES copy cleared) or `both` (AES kept as fallback cache).
+   *
+   * The Key Vault secret name is auto-generated as
+   * `gateway-target-{uuid_v7}` when `secret_name` is omitted. ADR-0020.
+   */
+  migrateTargetToKV(
+    endpointId: number,
+    targetId: number,
+    input: { mode: Extract<CredentialStorageMode, "kv" | "both">; secret_name?: string },
+  ): Promise<Target> {
+    return request(`/admin/v1/endpoints/${endpointId}/targets/${targetId}/migrate-to-kv`, {
+      method: "POST",
+      body: input,
     });
   },
 

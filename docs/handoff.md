@@ -81,20 +81,20 @@ M  internal/usage/writer.go                             (Onda 6)
 
 ### Próxima ação (Ubuntu notebook)
 
-1. **Desbloquear ambiente:** instalar `az` CLI + conectar VPN + `az login`
-   (tenant `c050c98c-b463-4591-ac3b-deb782c0ba6e`). Sem isso o gateway não boota.
-2. **Iniciar Onda 4.5 — Target credentials no Key Vault** (ADR-0020 a redigir).
-   Resolve quebra de targets quando `DB_ENCRYPTION_KEY` rotaciona. Escopo
-   detalhado em `roadmap.md §3.3`.
-3. **Voice Live (Onda 8) foi rejeitada** em 2026-05-28 — ver ADR-0023 e
-   `roadmap.md §6`. Streaming de voz fica como responsabilidade da app
-   cliente, não do gateway.
+**Onda 4.5 (Target credentials no Key Vault) foi entregue** em 2026-05-28
+— ADR-0020 `accepted`. Próxima onda: a decidir entre as frentes pendentes
+abaixo (ou o owner sugere outra). Sugestão de ordem:
+
+1. **Cache de lookup** (§3.1 Desempenho, P1). Tira 2 DB hits por request com
+   LRU+TTL em memória. ~5-10 ms de ganho. Baixo risco, sem ADR pesado.
+2. **SSO Entra ID / OIDC** (§3.3 Segurança, P1) — depende de App Registration
+   no Entra corporativo (passo externo).
+3. **Modelos como CRUD + Page Models** (§3.4, P2) — unifica YAML/DB pra modelos.
 
 ### Frentes pendentes (sem ETA específica)
 
-- **Validação ao vivo da Onda 6** (Caminho 1: header + 1 query SQL). Não bloqueia Onda 8.
+- **Validação ao vivo da Onda 6** (Caminho 1: header + 1 query SQL).
 - **Bug 2 — Acessos não persiste** — instrumentação adicionada, aguarda repro com DevTools Network.
-- **Onda 4.5 — Target credentials no KV** (ADR-0020 pendente). Pré-requisito ideal pra Onda 8.2 não introduzir débito.
 - **SSO Entra ID / OIDC** (P1 Segurança — ADR sem número ainda). Quando rolar, migration remove o `root` da mig 010.
 - **Rotação de chaves vazadas** da POC AgentFlow (Voice Live, ElevenLabs, Cartesia, MS Graph, Zenvia, etc.) — owner postergou explicitamente em 2026-05-27.
 
@@ -296,9 +296,9 @@ Movidas pra subdir como referência histórica. `golang-migrate` ignora subdirs,
 
 O contrato (`SPEC.md`) ainda menciona PostgreSQL/pgx em várias seções. Foi parcialmente atualizada nesta sessão; o resto fica como tech debt (não bloqueia operação). Itens já anotados em `roadmap.md` §6.
 
-### 5.3 Onda 4.5 — Target credentials no KV (ainda não iniciada)
+### 5.3 Onda 4.5 — Target credentials no KV (entregue 2026-05-28)
 
-Resolve o problema "rotacionar `DB_ENCRYPTION_KEY` quebra targets". Próxima onda sugerida **depois** que o ambiente SQL Server estiver estável (✅ está). Escopo completo em `roadmap.md` §3.3.
+✅ Entregue. ADR-0020 `accepted`. Schema novo `proxy_targets.credential_storage_mode {aes|kv|both}` + `kv_secret_name`; resolver com timeout 200 ms + fallback AES em modo `both`; CLI `cmd/migrate-targets-to-kv`; endpoint admin `POST /admin/v1/endpoints/{id}/targets/{tid}/migrate-to-kv`; botão UI "Migrar para Key Vault". Targets existentes ficaram em `aes` (zero migração compulsória). Onda futura abre ADR pra descontinuar AES quando KV provar SLA.
 
 ### 5.4 Latência ainda dominada pelo Azure
 
