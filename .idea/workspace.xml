@@ -4,18 +4,19 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="feat(backend): completa Onda 4.5 — migration 011 + resolver + CLI + ADR-002">
+    <list default="true" id="683012e6-8179-43e3-9889-426981f3bae8" name="Changes" comment="feat: AES &amp; KV">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/cmd/gateway/main.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/gateway/main.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/docs/adrs/0020-target-credentials-no-key-vault.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/adrs/0020-target-credentials-no-key-vault.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/handoff.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/handoff.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/docs/roadmap.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/roadmap.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/api/admin/handlers/endpoints.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/api/admin/handlers/endpoints.go" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/internal/api/admin/router.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/api/admin/router.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/internal/app/adminservice/service.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/app/adminservice/service.go" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/migrations/011_proxy_targets_kv_credential_mode.up.sql" beforeDir="false" afterPath="$PROJECT_DIR$/migrations/011_proxy_targets_kv_credential_mode.up.sql" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/db/migrate.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/db/migrate.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/proxy/handler.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/proxy/handler.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/web/package-lock.json" beforeDir="false" afterPath="$PROJECT_DIR$/web/package-lock.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/web/package.json" beforeDir="false" afterPath="$PROJECT_DIR$/web/package.json" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/web/src/lib/api.ts" beforeDir="false" afterPath="$PROJECT_DIR$/web/src/lib/api.ts" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/web/src/pages/EndpointDetail.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/web/src/pages/EndpointDetail.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/web/src/pages/Dashboard.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/web/src/pages/Dashboard.tsx" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/web/src/pages/Observability.tsx" beforeDir="false" afterPath="$PROJECT_DIR$/web/src/pages/Observability.tsx" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -117,40 +118,41 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;Go Build.admin-create.executor&quot;: &quot;Run&quot;,
-    &quot;Go Build.gateway.executor&quot;: &quot;Run&quot;,
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.GoLinterPluginOnboardingV2&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.GoLinterPluginStorageMigration&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.go.analysis.ui.options.defaults&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.go.formatter.settings.were.checked&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.go.modules.go.list.on.any.changes.was.set&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
-    &quot;codeWithMe.voiceChat.enabledByDefault&quot;: &quot;false&quot;,
-    &quot;com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;v2&quot;,
-    &quot;go.sdk.automatically.set&quot;: &quot;true&quot;,
-    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
-    &quot;junie.onboarding.icon.badge.shown&quot;: &quot;true&quot;,
-    &quot;last_opened_file_path&quot;: &quot;/home/daniel&quot;,
-    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
-    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
-    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;preferences.pluginManager&quot;,
-    &quot;to.speed.mode.migration.done&quot;: &quot;true&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Go Build.admin-create.executor": "Run",
+    "Go Build.gateway.executor": "Run",
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.GoLinterPluginOnboardingV2": "true",
+    "RunOnceActivity.GoLinterPluginStorageMigration": "true",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.go.analysis.ui.options.defaults": "true",
+    "RunOnceActivity.go.formatter.settings.were.checked": "true",
+    "RunOnceActivity.go.modules.go.list.on.any.changes.was.set": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "codeWithMe.voiceChat.enabledByDefault": "false",
+    "com.intellij.ml.llm.matterhorn.ej.ui.settings.DefaultModelSelectionForGA.v1": "true",
+    "git-widget-placeholder": "v2",
+    "go.sdk.automatically.set": "true",
+    "ignore.virus.scanning.warn.message": "true",
+    "junie.onboarding.icon.badge.shown": "true",
+    "last_opened_file_path": "/home/daniel",
+    "node.js.detected.package.eslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "settings.editor.selected.configurable": "preferences.pluginManager",
+    "to.speed.mode.migration.done": "true",
+    "ts.external.directory.path": "/home/daniel/projects/ai-gateway/web/node_modules/typescript/lib"
   },
-  &quot;keyToStringList&quot;: {
-    &quot;DatabaseDriversLRU&quot;: [
-      &quot;postgresql&quot;
+  "keyToStringList": {
+    "DatabaseDriversLRU": [
+      "postgresql"
     ]
   }
-}</component>
+}]]></component>
   <component name="RunManager" selected="Go Build.gateway">
     <configuration name="admin-create" type="GoApplicationRunConfiguration" factoryName="Go Application">
       <module name="ai-gateway" />
@@ -228,6 +230,7 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="feat(backend): Onda 4.5 backend + CLI" />
     <MESSAGE value="feat(backend): completa Onda 4.5 — migration 011 + resolver + CLI + ADR-002" />
-    <option name="LAST_COMMIT_MESSAGE" value="feat(backend): completa Onda 4.5 — migration 011 + resolver + CLI + ADR-002" />
+    <MESSAGE value="feat: AES &amp; KV" />
+    <option name="LAST_COMMIT_MESSAGE" value="feat: AES &amp; KV" />
   </component>
 </project>

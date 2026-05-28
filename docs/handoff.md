@@ -79,24 +79,43 @@ M  internal/usage/writer.go                             (Onda 6)
 3. `spike(voice-live): cliente isolado para baseline de latência` — `_voicelive-spike/` inteiro
 4. `docs: atualizar roadmap (Onda 8), how-it-works (pós-SQL Server) e handoff` — docs/* atualizados
 
-### Próxima ação (Ubuntu notebook)
+### Próxima ação
 
-**Onda 4.5 (Target credentials no Key Vault) foi entregue** em 2026-05-28
-— ADR-0020 `accepted`. Próxima onda: a decidir entre as frentes pendentes
-abaixo (ou o owner sugere outra). Sugestão de ordem:
+Sessão de 2026-05-28 fechou várias frentes; próxima onda é a decidir.
 
-1. **Cache de lookup** (§3.1 Desempenho, P1). Tira 2 DB hits por request com
-   LRU+TTL em memória. ~5-10 ms de ganho. Baixo risco, sem ADR pesado.
-2. **SSO Entra ID / OIDC** (§3.3 Segurança, P1) — depende de App Registration
-   no Entra corporativo (passo externo).
-3. **Modelos como CRUD + Page Models** (§3.4, P2) — unifica YAML/DB pra modelos.
+**Entregue nessa sessão (commits a serem pushados):**
+
+- **Onda 4.5** — Target credentials no Key Vault (ADR-0020 `accepted`)
+- **ADR-0024** — Usage tracking no proxy plane (Playground agora aparece em `usage_events` + dashboards)
+- **ADR-0025** — `MIGRATIONS_AUTO_APPLY` toggle (default `true`; `false` em prod pra DBA controlar janela)
+- **ADR-0026 V1** — Secrets Windows sem KV: DPAPI cobre boot (4 secrets); `gogateway.secrets` + Always Encrypted cobre runtime (target creds Onda 4.5). Inclui:
+  - `internal/infra/dpapi/` (Windows-only via build tags; stub em Linux/macOS)
+  - `internal/infra/secretsdb/` (drop-in pra `keyvault.SecretGetter` + `SecretSetter`)
+  - `migrations/012_gogateway_secrets.up.sql` (tabela base; AE manual via PowerShell no setup)
+  - `cmd/secrets/` (CLI 5 subcomandos: set/rotate/get/list/delete)
+  - main.go: env `SECRET_PROVIDER=kv\|db` decide backend; DPAPI loader em modo db
+  - `docs/deploy/windows.md §5.3` documenta setup completo
+- **Fase A polish** Dashboard + Observability (bugs corrigidos, skeletons matching colunas, validação YYYYMM, ordenação top spenders, tooltips, refresh)
+- **Fase B** Dashboard com 5 charts via recharts (timeseries requests + 4xx/5xx, latência avg+max, custo BRL área, top apps barra, tier pie)
+- **Manuais de deploy**: `docs/deploy/linux.md` (nginx + Docker Compose / systemd) e `docs/deploy/windows.md` (IIS + WinSW)
+- **Postman collection** em `docs/postman/ai-gateway.postman_collection.json` (15 requests, 7 folders, test script captura adminToken)
+- **Notas vault Obsidian** em `KB/AI-Gateway/Deploy/` (3 notas — `_MOC`, `Linux-NGINX-Docker`, `Windows-IIS-WinSW`)
+
+**Próxima onda (a decidir):**
+
+1. **Cache de lookup** (§3.1 Desempenho, P1) — ~5-10ms ganho, baixo risco
+2. **SSO Entra ID / OIDC** (§3.3 Segurança, P1) — depende de App Registration no Entra corp
+3. **Modelos como CRUD + Page Models** (§3.4, P2)
+4. **Streaming SSE no proxy** (follow-up ADR-0024) — só faz sentido quando consumidores reais começarem a usar stream em produção
 
 ### Frentes pendentes (sem ETA específica)
 
 - **Validação ao vivo da Onda 6** (Caminho 1: header + 1 query SQL).
 - **Bug 2 — Acessos não persiste** — instrumentação adicionada, aguarda repro com DevTools Network.
 - **SSO Entra ID / OIDC** (P1 Segurança — ADR sem número ainda). Quando rolar, migration remove o `root` da mig 010.
-- **Rotação de chaves vazadas** da POC AgentFlow (Voice Live, ElevenLabs, Cartesia, MS Graph, Zenvia, etc.) — owner postergou explicitamente em 2026-05-27.
+- **Anthropic / Gemini / Cohere adapters** pra usage extractor (ADR-0024 só cobre azure_openai + openai). Quando outro provider virar P1.
+- **Percentis p50/p95/p99** no timeseries do dashboard (hoje só avg+max). `PERCENTILE_CONT` no SQL Server precisa subquery dedicada.
+- **Rotação de chaves vazadas** da POC AgentFlow — owner postergou explicitamente em 2026-05-27.
 
 ---
 

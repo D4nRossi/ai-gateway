@@ -1,0 +1,372 @@
+{
+  "info": {
+    "_postman_id": "8e0a01f7-4d3a-4c10-92c2-ai-gateway-2026-05-28",
+    "name": "AI Gateway",
+    "description": "Collection oficial pra testar o AI Gateway (Go) — admin plane + chat legacy + proxy genérico.\n\n## Como usar\n\n1. **Importe** este arquivo em Postman → New → File\n2. **Edite** as variáveis da collection (Variables tab):\n   - `baseUrl` — default `http://localhost:8080`\n   - `adminUsername` / `adminPassword` — credenciais do admin (default `root` / `Adm!nGogateway2026` da migration 010)\n   - `appToken` — bearer da aplicação que vai chamar /v1/chat/completions ou /v1/proxy/{slug}/...\n   - `endpointSlug` — slug do proxy endpoint cadastrado (criado via Admin > Endpoints > Create)\n3. **Rode 'Admin Auth > Login'** primeiro — o test script captura o token e popula `adminToken` automaticamente. Daí pra frente, qualquer request com `{{adminToken}}` no header funciona.\n4. **Provisione** application + endpoint + grant via os requests do grupo Admin antes de testar os Gateway endpoints.\n\n## Variáveis\n\n| Var | Default | Descrição |\n|---|---|---|\n| baseUrl | http://localhost:8080 | URL do gateway |\n| adminUsername | root | User do admin plane |\n| adminPassword | Adm!nGogateway2026 | Senha temporária da migration 010 |\n| adminToken | (vazio) | Capturado automaticamente pelo Login |\n| appToken | gwk_basic_k9mxqr7tz2wn3vfp | Token de exemplo (AppBasico do gateway.yaml) |\n| endpointSlug | meu-endpoint | Slug do proxy endpoint a usar |\n\n## Cobertura\n\n- Admin auth (login + logout)\n- Admin CRUD: applications, endpoints, targets (com migrate-to-kv da ADR-0020), users, grants\n- Admin observability: usage / audit / budget\n- Gateway chat legacy (/v1/chat/completions)\n- Gateway proxy plane (/v1/proxy/{slug}/chat/completions) — emite usage_events na ADR-0024\n",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080", "type": "string" },
+    { "key": "adminUsername", "value": "root", "type": "string" },
+    { "key": "adminPassword", "value": "Adm!nGogateway2026", "type": "string" },
+    { "key": "adminToken", "value": "", "type": "string" },
+    { "key": "appToken", "value": "gwk_basic_k9mxqr7tz2wn3vfp", "type": "string" },
+    { "key": "endpointSlug", "value": "meu-endpoint", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "Admin Auth",
+      "item": [
+        {
+          "name": "Login (captura adminToken)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{adminUsername}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/admin/v1/auth/login", "host": ["{{baseUrl}}"], "path": ["admin", "v1", "auth", "login"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('login retornou 200', () => pm.response.to.have.status(200));",
+                  "const data = pm.response.json();",
+                  "pm.test('payload tem token', () => pm.expect(data.token).to.be.a('string').and.not.empty);",
+                  "pm.collectionVariables.set('adminToken', data.token);",
+                  "console.log('adminToken atualizado · role=' + data.role + ' · expira em ' + data.expires_at);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/v1/auth/logout", "host": ["{{baseUrl}}"], "path": ["admin", "v1", "auth", "logout"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin · Applications",
+      "item": [
+        {
+          "name": "List applications",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/v1/applications", "host": ["{{baseUrl}}"], "path": ["admin", "v1", "applications"] }
+          }
+        },
+        {
+          "name": "Create application",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"AppPostmanTest\",\n  \"tier\": \"tier_1\",\n  \"allowed_models\": [\"gpt-4.1-nano\"],\n  \"streaming_allowed\": false,\n  \"max_rpm\": 60,\n  \"max_tpm\": 50000,\n  \"monthly_budget_brl\": 10\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/admin/v1/applications", "host": ["{{baseUrl}}"], "path": ["admin", "v1", "applications"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const data = pm.response.json();",
+                  "  console.log('app criada · id=' + data.id + ' · token=' + data.token + ' · key_prefix=' + data.key_prefix);",
+                  "  console.log('SALVE este token: ele só é mostrado uma vez. Cole em {appToken} se for usar em /v1/chat ou /v1/proxy.');",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Rotate API key (gera novo bearer)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/v1/applications/:id/rotate-key",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "v1", "applications", ":id", "rotate-key"],
+              "variable": [{ "key": "id", "value": "1", "description": "Application ID" }]
+            }
+          }
+        },
+        {
+          "name": "Grant endpoint access",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/v1/applications/:appId/grants/:endpointId",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "v1", "applications", ":appId", "grants", ":endpointId"],
+              "variable": [
+                { "key": "appId", "value": "1" },
+                { "key": "endpointId", "value": "1" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin · Endpoints",
+      "item": [
+        {
+          "name": "List endpoints",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": { "raw": "{{baseUrl}}/admin/v1/endpoints", "host": ["{{baseUrl}}"], "path": ["admin", "v1", "endpoints"] }
+          }
+        },
+        {
+          "name": "Create endpoint (Azure OpenAI)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"{{endpointSlug}}\",\n  \"name\": \"Azure OpenAI Test\",\n  \"provider_kind\": \"azure_openai\",\n  \"provider_config\": {\n    \"api_version\": \"2025-01-01-preview\",\n    \"model_to_deployment\": { \"gpt-4.1-mini\": \"gpt-4.1-mini\", \"gpt-4.1-nano\": \"gpt-4.1-nano\" }\n  },\n  \"lb_strategy\": \"round_robin\",\n  \"max_rps\": 0,\n  \"max_monthly_requests\": 0\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/admin/v1/endpoints", "host": ["{{baseUrl}}"], "path": ["admin", "v1", "endpoints"] }
+          }
+        },
+        {
+          "name": "Add target (mode=aes default)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://danie-mc4ryviy-westeurope.cognitiveservices.azure.com\",\n  \"weight\": 1,\n  \"auth\": {\n    \"type\": \"api_key_header\",\n    \"header\": \"api-key\",\n    \"value\": \"SUA_AZURE_OPENAI_KEY_AQUI\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/v1/endpoints/:id/targets",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "v1", "endpoints", ":id", "targets"],
+              "variable": [{ "key": "id", "value": "1" }]
+            }
+          }
+        },
+        {
+          "name": "Migrate target to Key Vault (ADR-0020)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mode\": \"both\",\n  \"secret_name\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/v1/endpoints/:id/targets/:targetID/migrate-to-kv",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "v1", "endpoints", ":id", "targets", ":targetID", "migrate-to-kv"],
+              "variable": [
+                { "key": "id", "value": "1" },
+                { "key": "targetID", "value": "1" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin · Observability",
+      "item": [
+        {
+          "name": "List usage events (últimas 24h)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/v1/usage?limit=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "v1", "usage"],
+              "query": [
+                { "key": "limit", "value": "100" },
+                { "key": "application", "value": "AppBasico", "disabled": true },
+                { "key": "from", "value": "2026-05-28T00:00:00Z", "disabled": true },
+                { "key": "to", "value": "2026-05-28T23:59:59Z", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List audit events",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/v1/audit?limit=100",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "v1", "audit"],
+              "query": [
+                { "key": "limit", "value": "100" },
+                { "key": "event_type", "value": "request_completed", "disabled": true }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Budget do mês corrente",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/v1/budget",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "v1", "budget"],
+              "query": [
+                { "key": "period", "value": "202605", "disabled": true }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gateway · Chat legacy (/v1/chat/completions)",
+      "item": [
+        {
+          "name": "Chat completion non-stream",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{appToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4.1-nano\",\n  \"messages\": [\n    {\"role\": \"system\", \"content\": \"Você é um assistente conciso.\"},\n    {\"role\": \"user\", \"content\": \"Diga oi em uma frase.\"}\n  ],\n  \"max_tokens\": 60,\n  \"temperature\": 0.2\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/chat/completions", "host": ["{{baseUrl}}"], "path": ["v1", "chat", "completions"] }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('status 200', () => pm.response.to.have.status(200));",
+                  "const h = pm.response.headers.get('X-Gateway-Latency-Breakdown');",
+                  "if (h) console.log('latency breakdown · ' + h);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Chat completion stream (SSE)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{appToken}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4.1-nano\",\n  \"messages\": [\n    {\"role\": \"user\", \"content\": \"Conta uma piada curta.\"}\n  ],\n  \"stream\": true,\n  \"max_tokens\": 80\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/v1/chat/completions", "host": ["{{baseUrl}}"], "path": ["v1", "chat", "completions"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Gateway · Proxy plane (/v1/proxy/{slug})",
+      "item": [
+        {
+          "name": "Chat completion via proxy (Azure OpenAI)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{appToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"gpt-4.1-mini\",\n  \"messages\": [\n    {\"role\": \"user\", \"content\": \"Resuma a teoria da relatividade em 2 frases.\"}\n  ],\n  \"max_tokens\": 120\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/v1/proxy/{{endpointSlug}}/chat/completions",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "proxy", "{{endpointSlug}}", "chat", "completions"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('proxy retornou', () => pm.expect(pm.response.code).to.be.oneOf([200, 401, 403, 502]));",
+                  "console.log('Após esta chamada, vá em Admin · Observability > List usage events — deve aparecer uma linha nova (ADR-0024).');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Custom passthrough (provider_kind=custom)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{appToken}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/v1/proxy/{{endpointSlug}}/qualquer/caminho",
+              "host": ["{{baseUrl}}"],
+              "path": ["v1", "proxy", "{{endpointSlug}}", "qualquer", "caminho"]
+            },
+            "description": "Exemplo de passthrough genérico. Funciona pra qualquer endpoint com provider_kind=custom — gateway não interpreta payload, só repassa."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Healthchecks",
+      "item": [
+        {
+          "name": "Liveness (/healthz)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/healthz", "host": ["{{baseUrl}}"], "path": ["healthz"] }
+          }
+        },
+        {
+          "name": "Readiness (/readyz)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/readyz", "host": ["{{baseUrl}}"], "path": ["readyz"] }
+          }
+        }
+      ]
+    }
+  ]
+}

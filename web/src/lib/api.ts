@@ -287,6 +287,35 @@ export interface AuditEvent {
   created_at: string;
 }
 
+/**
+ * One bucket of the Dashboard timeseries (ADR-0024 + roadmap §3.5).
+ *
+ *   - `bucket_start` is RFC3339 UTC; recharts renders it as-is via Date()
+ *     and bins on the local timezone. Use bucket_start as the X axis.
+ *   - `avg_latency_ms` is a float (real average); `max_latency_ms` is integer.
+ *   - `total_cost_brl` is BRL — formatadores no front usam Intl.NumberFormat.
+ */
+export interface DashboardTimeseriesPoint {
+  bucket_start: string;
+  request_count: number;
+  avg_latency_ms: number;
+  max_latency_ms: number;
+  total_tokens: number;
+  total_cost_brl: number;
+  error_count_4xx: number;
+  error_count_5xx: number;
+}
+
+/** One category in a Dashboard breakdown chart (pie / bar). */
+export interface DashboardBreakdownRow {
+  key: string;
+  request_count: number;
+  total_tokens: number;
+  total_cost_brl: number;
+}
+
+export type DashboardBreakdownDimension = "application" | "tier" | "model";
+
 export interface BudgetCounter {
   application_name: string;
   period: string;
@@ -488,6 +517,29 @@ export const api = {
     limit?: number;
   } = {}): Promise<AuditEvent[]> {
     return arr(await request<AuditEvent[] | null>("/admin/v1/audit", { query: params }));
+  },
+  async listDashboardTimeseries(params: {
+    from?: string;
+    to?: string;
+    bucket?: "hour" | "day";
+  } = {}): Promise<DashboardTimeseriesPoint[]> {
+    return arr(
+      await request<DashboardTimeseriesPoint[] | null>("/admin/v1/dashboard/timeseries", {
+        query: params,
+      }),
+    );
+  },
+  async listDashboardBreakdown(params: {
+    from?: string;
+    to?: string;
+    dimension?: DashboardBreakdownDimension;
+    limit?: number;
+  } = {}): Promise<DashboardBreakdownRow[]> {
+    return arr(
+      await request<DashboardBreakdownRow[] | null>("/admin/v1/dashboard/breakdown", {
+        query: params,
+      }),
+    );
   },
   async listBudget(params: {
     period?: string;

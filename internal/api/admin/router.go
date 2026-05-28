@@ -127,6 +127,8 @@ func NewRouter(deps Deps) http.Handler {
 			r.Get("/v1/usage", adminhandlers.ListUsageEvents(deps.DB))
 			r.Get("/v1/audit", adminhandlers.ListAuditEvents(deps.DB))
 			r.Get("/v1/budget", adminhandlers.ListBudget(deps.DB))
+			r.Get("/v1/dashboard/timeseries", adminhandlers.DashboardTimeseries(deps.DB))
+			r.Get("/v1/dashboard/breakdown", adminhandlers.DashboardBreakdown(deps.DB))
 		})
 	})
 

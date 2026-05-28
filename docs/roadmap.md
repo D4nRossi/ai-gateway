@@ -307,6 +307,10 @@ Ondas entregues indexadas pelos ADRs que decidiram cada uma.
 | 6 | Latency breakdown observável | ADR-0021 | ✅ código; ⏳ validação ao vivo (interrompida pela Onda 7) |
 | 7 | Troca emergencial PostgreSQL → SQL Server (schema gogateway) | ADR-0022 | ✅ **accepted** (smoke test passou 2026-05-27) |
 | 4.5 | Target credentials no Key Vault (mode por target: aes/kv/both) | ADR-0020 | ✅ **accepted** (2026-05-28) |
+| Obs/Usage proxy | Usage tracking no proxy plane (Playground passa a aparecer) | ADR-0024 | ✅ **accepted** (2026-05-28) |
+| Deploy | Manuais Linux/Windows + flag MIGRATIONS_AUTO_APPLY | ADR-0025 | ✅ **accepted** (2026-05-28) |
+| Dashboard | Fase A polish + Fase B charts (recharts; timeseries + breakdown) | (sem ADR — UI) | ✅ entregue (2026-05-28) |
+| Secrets Windows | DPAPI bootstrap + Always Encrypted (gogateway.secrets) + CLI cmd/secrets | ADR-0026 | ✅ **accepted** V1 (2026-05-28) — boot via DPAPI; runtime (target creds Onda 4.5) via secretsdb. Migração de boot secrets pra AE: V2 |
 | 8 | Streaming de áudio bidirecional (Voice Live + LLM + TTS) | ADR-0023 | ❌ **rejected** (2026-05-28) — out of scope; voz fica na app cliente |
 | (sem nº) | SSO Entra ID / OIDC | ADR-0024 a fazer | ⏳ planejada (depende de App Registration no Entra) |
 | (sem nº) | Modelos como CRUD + Page Models | ADR-0025 a fazer? | ⏳ planejada |
