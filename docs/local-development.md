@@ -461,10 +461,25 @@ GoLand tem tab **Database** (lateral direita). Adicione uma data source:
 ### Pelo `sqlcmd` (CLI)
 
 ```pwsh
+# Windows PowerShell
 $pw = az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom --query value -o tsv
 sqlcmd -S BRSPVPDEV003,1433 -d AzureAI_Gateway_hom -U usr_sist_AzureAI_Gateway_hom -P $pw -C
 # -C = TrustServerCertificate; remover em prod
 ```
+
+```bash
+# Linux/macOS — requer mssql-tools18 instalado (passo no handoff.md §2.4)
+PW=$(az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom --query value -o tsv)
+sqlcmd -S BRSPVPDEV003,1433 -d AzureAI_Gateway_hom -U usr_sist_AzureAI_Gateway_hom -P "$PW" -C
+```
+
+### Alternativas GUI no Linux (sem SSMS)
+
+SSMS não existe no Linux. Alternativas equivalentes:
+
+- **GoLand Database tool** (recomendado se já está no IDE) — passo a passo na subseção acima
+- **Azure Data Studio** — Microsoft, multiplataforma. `sudo snap install azuredatastudio` ou .deb do site oficial
+- **DBeaver Community** — universal. `sudo snap install dbeaver-ce`
 
 Queries úteis (sempre com schema qualificado):
 
