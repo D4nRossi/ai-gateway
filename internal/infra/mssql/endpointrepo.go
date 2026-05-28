@@ -166,40 +166,62 @@ func (r *EndpointRepo) Delete(ctx context.Context, id int64) error {
 }
 
 // AddTarget inserts a new Target, encrypting its auth credentials (ADR-0012).
+// Default CredentialStorageMode is CredentialModeAES when not set by the caller
+// (preserves pre-ADR-0020 behavior). The repo treats credential_storage_mode
+// and kv_secret_name as pure persistence: the service layer is responsible
+// for coordinating KV writes ordered with the AES persistence (ADR-0020).
 func (r *EndpointRepo) AddTarget(ctx context.Context, t endpoint.Target) (endpoint.Target, error) {
 	enc, err := r.encryptAuth(t.Auth)
 	if err != nil {
 		return endpoint.Target{}, fmt.Errorf("encrypting auth for target in endpoint id=%d: %w", t.EndpointID, err)
 	}
 
+	mode := t.CredentialStorageMode
+	if mode == "" {
+		mode = endpoint.CredentialModeAES
+	}
+
 	const q = `
-		INSERT INTO gogateway.proxy_targets (endpoint_id, url, weight, auth_type, auth_config_enc, active)
+		INSERT INTO gogateway.proxy_targets
+		    (endpoint_id, url, weight, auth_type, auth_config_enc, credential_storage_mode, kv_secret_name, active)
 		OUTPUT INSERTED.id, INSERTED.created_at
-		VALUES (@p1, @p2, @p3, @p4, @p5, @p6)`
+		VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8)`
 
 	row := r.db.QueryRowContext(ctx, q,
-		t.EndpointID, t.URL, t.Weight, string(t.Auth.Type), enc, t.Active,
+		t.EndpointID, t.URL, t.Weight, string(t.Auth.Type), enc,
+		string(mode), nullableString(t.KVSecretName), t.Active,
 	)
 	if err := row.Scan(&t.ID, &t.CreatedAt); err != nil {
 		return endpoint.Target{}, fmt.Errorf("inserting proxy target: %w", err)
 	}
+	t.CredentialStorageMode = mode
 	return t, nil
 }
 
 // UpdateTarget persists changes to an existing Target. ID must be set.
-// Auth credentials are re-encrypted on every update.
+// Auth credentials are re-encrypted on every update. As in AddTarget, an
+// empty CredentialStorageMode defaults to CredentialModeAES.
 func (r *EndpointRepo) UpdateTarget(ctx context.Context, t endpoint.Target) (endpoint.Target, error) {
 	enc, err := r.encryptAuth(t.Auth)
 	if err != nil {
 		return endpoint.Target{}, fmt.Errorf("encrypting auth for target id=%d: %w", t.ID, err)
 	}
 
+	mode := t.CredentialStorageMode
+	if mode == "" {
+		mode = endpoint.CredentialModeAES
+	}
+
 	const q = `
 		UPDATE gogateway.proxy_targets
-		SET url = @p1, weight = @p2, auth_type = @p3, auth_config_enc = @p4, active = @p5
-		WHERE id = @p6`
+		SET url = @p1, weight = @p2, auth_type = @p3, auth_config_enc = @p4,
+		    credential_storage_mode = @p5, kv_secret_name = @p6, active = @p7
+		WHERE id = @p8`
 
-	result, err := r.db.ExecContext(ctx, q, t.URL, t.Weight, string(t.Auth.Type), enc, t.Active, t.ID)
+	result, err := r.db.ExecContext(ctx, q,
+		t.URL, t.Weight, string(t.Auth.Type), enc,
+		string(mode), nullableString(t.KVSecretName), t.Active, t.ID,
+	)
 	if err != nil {
 		return endpoint.Target{}, fmt.Errorf("updating proxy target id=%d: %w", t.ID, err)
 	}
@@ -210,6 +232,7 @@ func (r *EndpointRepo) UpdateTarget(ctx context.Context, t endpoint.Target) (end
 	if n == 0 {
 		return endpoint.Target{}, fmt.Errorf("proxy target id=%d: %w", t.ID, endpoint.ErrNotFound)
 	}
+	t.CredentialStorageMode = mode
 	return t, nil
 }
 
@@ -331,7 +354,8 @@ func (r *EndpointRepo) ListGrantedEndpointIDs(ctx context.Context, applicationID
 
 func (r *EndpointRepo) loadTargets(ctx context.Context, endpointID int64) ([]endpoint.Target, error) {
 	const q = `
-		SELECT id, endpoint_id, url, weight, auth_type, auth_config_enc, active, created_at
+		SELECT id, endpoint_id, url, weight, auth_type, auth_config_enc,
+		       credential_storage_mode, kv_secret_name, active, created_at
 		FROM gogateway.proxy_targets
 		WHERE endpoint_id = @p1 AND active = 1
 		ORDER BY id`
@@ -347,17 +371,28 @@ func (r *EndpointRepo) loadTargets(ctx context.Context, endpointID int64) ([]end
 		var t endpoint.Target
 		var authType string
 		var authEnc []byte
+		var mode string
+		var kvName sql.NullString
 
 		if err := rows.Scan(
 			&t.ID, &t.EndpointID, &t.URL, &t.Weight,
-			&authType, &authEnc, &t.Active, &t.CreatedAt,
+			&authType, &authEnc, &mode, &kvName, &t.Active, &t.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanning target row: %w", err)
 		}
 
+		// Decrypt the AES copy when present. For CredentialModeKV with NULL
+		// auth_config_enc this yields AuthNone, which the resolver detects
+		// and routes to Key Vault instead. For CredentialModeBoth the
+		// decrypted Auth is the freshness cache used as fallback when KV
+		// times out (ADR-0020).
 		t.Auth, err = r.decryptAuth(endpoint.AuthType(authType), authEnc)
 		if err != nil {
 			return nil, fmt.Errorf("decrypting auth for target id=%d: %w", t.ID, err)
+		}
+		t.CredentialStorageMode = endpoint.CredentialStorageMode(mode)
+		if kvName.Valid {
+			t.KVSecretName = kvName.String
 		}
 		targets = append(targets, t)
 	}
@@ -468,4 +503,15 @@ func unmarshalProviderConfig(raw []byte) (endpoint.ProviderConfig, error) {
 		return nil, err
 	}
 	return pc, nil
+}
+
+// nullableString converts a Go string to sql.NullString so empty values map
+// to NULL on the SQL Server side. Used for nullable NVARCHAR columns where
+// the difference between "" and NULL matters (e.g. CHECK constraints that
+// reject empty strings — see proxy_targets.kv_secret_name in migration 011).
+func nullableString(s string) sql.NullString {
+	if s == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: s, Valid: true}
 }

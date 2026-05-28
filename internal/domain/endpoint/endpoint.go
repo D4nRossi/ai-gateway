@@ -9,6 +9,7 @@
 //   - ADR-0012 — AES-256-GCM for target credentials at rest
 //   - ADR-0013 — load balancing strategies
 //   - ADR-0015 — domain/app/infra layering
+//   - ADR-0020 — credential storage mode per target (aes/kv/both)
 package endpoint
 
 import (
@@ -130,6 +131,41 @@ type TargetAuth struct {
 	Password string
 }
 
+// CredentialStorageMode controls where a Target's credentials are persisted
+// and how the proxy resolves them at request time (ADR-0020).
+//
+//   - CredentialModeAES (default): credentials live in proxy_targets.auth_config_enc
+//     and are decrypted with the AES master key (ADR-0012). Status quo behavior.
+//   - CredentialModeKV: credentials live in Azure Key Vault under KVSecretName.
+//     The resolver fetches with a 200 ms timeout; failure surfaces to the caller
+//     (no fallback). Auth is empty/AuthNone on load.
+//   - CredentialModeBoth: KV is authoritative; auth_config_enc is a freshness
+//     cache. The resolver tries KV first (200 ms timeout); on error or timeout
+//     it falls back to the decrypted AES value and logs kv_fallback_used.
+type CredentialStorageMode string
+
+const (
+	CredentialModeAES  CredentialStorageMode = "aes"
+	CredentialModeKV   CredentialStorageMode = "kv"
+	CredentialModeBoth CredentialStorageMode = "both"
+)
+
+// validCredentialModes mirrors the CHECK constraint on
+// proxy_targets.credential_storage_mode (migration 011).
+var validCredentialModes = map[CredentialStorageMode]struct{}{
+	CredentialModeAES:  {},
+	CredentialModeKV:   {},
+	CredentialModeBoth: {},
+}
+
+// Valid reports whether m is a recognised credential storage mode.
+// Empty string is invalid; callers should default to CredentialModeAES
+// when migrating older payloads that predate ADR-0020.
+func (m CredentialStorageMode) Valid() bool {
+	_, ok := validCredentialModes[m]
+	return ok
+}
+
 // Target is a single upstream URL that the proxy may route to.
 // It belongs to exactly one ProxyEndpoint.
 type Target struct {
@@ -147,8 +183,22 @@ type Target struct {
 	// Ignored by other strategies. Must be > 0.
 	Weight int
 
-	// Auth holds the decrypted credentials for this target (ADR-0012).
+	// Auth holds the decrypted credentials for this target (ADR-0012). In
+	// CredentialModeKV the repository leaves this zero (AuthNone) and the
+	// resolver fetches from Key Vault. In CredentialModeBoth this is the
+	// freshness cache used when the KV read times out.
 	Auth TargetAuth
+
+	// CredentialStorageMode selects where Auth comes from at request time.
+	// Default CredentialModeAES preserves the pre-ADR-0020 behavior.
+	CredentialStorageMode CredentialStorageMode
+
+	// KVSecretName is the Key Vault secret name backing this target's
+	// credentials. Required when CredentialStorageMode is CredentialModeKV
+	// or CredentialModeBoth; empty otherwise. Default naming convention is
+	// "gateway-target-{uuid_v7}" generated at migration/creation time and
+	// kept immutable thereafter; custom names are accepted by the admin API.
+	KVSecretName string
 
 	// Active controls whether this target is eligible for selection.
 	Active bool

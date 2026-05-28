@@ -91,13 +91,17 @@ func run() error {
 	bootCtx, bootCancel := context.WithCancel(context.Background())
 	defer bootCancel()
 
-	var secretResolver config.SecretResolver
+	var (
+		secretResolver config.SecretResolver
+		kvClient       *keyvault.Client
+	)
 	vaultURL := os.Getenv("KEYVAULT_URI")
 	if vaultURL != "" {
-		kvClient, err := keyvault.New(vaultURL)
+		c, err := keyvault.New(vaultURL)
 		if err != nil {
 			return fmt.Errorf("initializing Azure Key Vault client: %w", err)
 		}
+		kvClient = c
 		secretResolver = kvClient
 		slog.Info("key vault resolver initialized", "vault_url", vaultURL)
 	} else {
@@ -186,9 +190,13 @@ func run() error {
 	// which detects strategy changes automatically.
 	balancerRegistry := loadbalancer.NewRegistry()
 	proxySvc := proxyservice.New(endpointRepo, balancerRegistry, logger)
+	// Credential resolver wires per-target storage mode (ADR-0020). kvClient
+	// may be nil when KEYVAULT_URI is unset — the resolver short-circuits
+	// mode=aes targets and surfaces clear errors for mode=kv|both.
+	credResolver := proxyservice.NewCredentialResolver(kvClient, logger)
 	proxyTransport := proxy.NewTransport()
 	proxyAuth := proxy.Auth(appRepo, logger)
-	proxyHandler := proxy.Handler(proxySvc, proxyTransport, logger)
+	proxyHandler := proxy.Handler(proxySvc, credResolver, proxyTransport, logger)
 	logger.Info("generic proxy plane configured")
 
 	// ── 6. PolicyStore ────────────────────────────────────────────────────────

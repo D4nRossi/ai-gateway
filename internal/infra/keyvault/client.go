@@ -30,10 +30,18 @@ type SecretGetter interface {
 	Get(ctx context.Context, name string) (string, error)
 }
 
+// SecretSetter is the contract used by code that writes secrets to the vault
+// (e.g. ADR-0020: migrating proxy target credentials, admin handlers updating
+// kv-backed targets, CLI cmd/migrate-targets-to-kv). Implemented by *Client.
+type SecretSetter interface {
+	Set(ctx context.Context, name, value string) error
+}
+
 // azClient is the subset of *azsecrets.Client we depend on. Extracting it as
 // an interface keeps Client testable without spinning up a real vault.
 type azClient interface {
 	GetSecret(ctx context.Context, name, version string, opts *azsecrets.GetSecretOptions) (azsecrets.GetSecretResponse, error)
+	SetSecret(ctx context.Context, name string, parameters azsecrets.SetSecretParameters, opts *azsecrets.SetSecretOptions) (azsecrets.SetSecretResponse, error)
 }
 
 // Client resolves Key Vault secrets with a small in-memory cache.
@@ -168,5 +176,59 @@ func (c *Client) log() *slog.Logger {
 	return slog.Default()
 }
 
-// Compile-time assertion: Client implements SecretGetter.
-var _ SecretGetter = (*Client)(nil)
+// Set persists value for name in the vault, creating a new version. The
+// in-memory cache entry for name (if any) is invalidated so the next Get
+// fetches the new value rather than serving a stale read from the previous
+// version (ADR-0020 write path).
+//
+// Reasoning: empty value is rejected up-front — Key Vault accepts empty
+// strings, but every consumer in this codebase treats them as a misconfigured
+// secret (see Get's ErrEmptyValue handling). Surfacing the inconsistency at
+// the write boundary is cheaper than diagnosing it at runtime.
+//
+// References:
+//   - ADR-0020 — credential storage mode per target
+//   - https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets#Client.SetSecret
+func (c *Client) Set(ctx context.Context, name, value string) error {
+	if name == "" {
+		return errors.New("secret name is required")
+	}
+	if value == "" {
+		return fmt.Errorf("secret %q: %w", name, ErrEmptyValue)
+	}
+
+	v := value
+	params := azsecrets.SetSecretParameters{Value: &v}
+
+	start := time.Now()
+	_, err := c.az.SetSecret(ctx, name, params, nil)
+	latency := time.Since(start)
+	if err != nil {
+		c.log().Error("key vault: set failed",
+			"secret_name", name,
+			"latency_ms", latency.Milliseconds(),
+			"err", err,
+		)
+		return fmt.Errorf("setting secret %q in key vault: %w", name, err)
+	}
+
+	// Invalidate cache so the next Get returns the new version. Without this,
+	// callers that Set then Get within the TTL window would see the previous
+	// value and silently misbehave.
+	c.mu.Lock()
+	delete(c.cache, name)
+	c.mu.Unlock()
+
+	c.log().Info("key vault: secret set",
+		"secret_name", name,
+		"value_length", len(value),
+		"latency_ms", latency.Milliseconds(),
+	)
+	return nil
+}
+
+// Compile-time assertion: Client implements SecretGetter and SecretSetter.
+var (
+	_ SecretGetter = (*Client)(nil)
+	_ SecretSetter = (*Client)(nil)
+)

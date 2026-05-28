@@ -13,9 +13,10 @@ import (
 // fakeAzClient is an in-memory azClient for tests. Counts calls per name so
 // we can assert cache hit/miss behavior.
 type fakeAzClient struct {
-	values map[string]string
-	err    error
-	calls  map[string]*int32
+	values   map[string]string
+	err      error
+	calls    map[string]*int32
+	setCalls map[string]*int32
 }
 
 func newFakeAz(values map[string]string) *fakeAzClient {
@@ -24,7 +25,7 @@ func newFakeAz(values map[string]string) *fakeAzClient {
 		var c int32
 		calls[k] = &c
 	}
-	return &fakeAzClient{values: values, calls: calls}
+	return &fakeAzClient{values: values, calls: calls, setCalls: make(map[string]*int32)}
 }
 
 func (f *fakeAzClient) GetSecret(_ context.Context, name, _ string, _ *azsecrets.GetSecretOptions) (azsecrets.GetSecretResponse, error) {
@@ -46,6 +47,21 @@ func (f *fakeAzClient) callCount(name string) int32 {
 		return atomic.LoadInt32(c)
 	}
 	return 0
+}
+
+func (f *fakeAzClient) SetSecret(_ context.Context, name string, parameters azsecrets.SetSecretParameters, _ *azsecrets.SetSecretOptions) (azsecrets.SetSecretResponse, error) {
+	if f.err != nil {
+		return azsecrets.SetSecretResponse{}, f.err
+	}
+	if parameters.Value != nil {
+		f.values[name] = *parameters.Value
+	}
+	if f.setCalls[name] == nil {
+		var c int32
+		f.setCalls[name] = &c
+	}
+	atomic.AddInt32(f.setCalls[name], 1)
+	return azsecrets.SetSecretResponse{}, nil
 }
 
 func newTestClient(az azClient, ttl time.Duration) *Client {

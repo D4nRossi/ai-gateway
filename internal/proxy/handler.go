@@ -30,9 +30,12 @@ const maxProxyBodyBytes = 1 << 20 // 1 MiB
 //
 //  1. Reads {slug} from chi URL parameters.
 //  2. Calls proxyservice.Resolve to load endpoint, verify grant, select target.
-//  3. Notifies the Balancer of the request start (least-connections counter).
-//  4. Forwards the request via httputil.ReverseProxy with our rewriteRequest.
-//  5. On response (or error), notifies the Balancer of the request end via a
+//  3. Resolves the target's credentials per its CredentialStorageMode
+//     (ADR-0020) — AES in-memory for mode=aes, Key Vault with 200 ms timeout
+//     for mode=kv|both.
+//  4. Notifies the Balancer of the request start (least-connections counter).
+//  5. Forwards the request via httputil.ReverseProxy with our rewriteRequest.
+//  6. On response (or error), notifies the Balancer of the request end via a
 //     ModifyResponse hook and ErrorHandler.
 //
 // Reasoning: the lifecycle hooks must fire exactly once per request, regardless
@@ -43,7 +46,8 @@ const maxProxyBodyBytes = 1 << 20 // 1 MiB
 // References:
 //   - ADR-0010 — generic HTTP proxy engine
 //   - ADR-0013 — load balancing lifecycle hooks
-func Handler(svc *proxyservice.Service, transport http.RoundTripper, logger *slog.Logger) http.Handler {
+//   - ADR-0020 — credential storage mode per target
+func Handler(svc *proxyservice.Service, resolver proxyservice.CredentialResolver, transport http.RoundTripper, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		slug := chi.URLParam(r, "slug")
 		if slug == "" {
@@ -65,6 +69,16 @@ func Handler(svc *proxyservice.Service, transport http.RoundTripper, logger *slo
 			handleResolveError(w, logger, slug, app.ID, err)
 			return
 		}
+
+		// Credential resolution per target (ADR-0020). For mode=aes this returns
+		// res.Target.Auth as-is; for mode=kv|both this consults Key Vault under
+		// a 200 ms deadline and may fall back to the cached AES copy.
+		resolvedAuth, err := resolver.Resolve(r.Context(), res.Target)
+		if err != nil {
+			handleCredentialResolveError(w, logger, slug, res.Target.ID, err)
+			return
+		}
+		res.Target.Auth = resolvedAuth
 
 		// Path translation per provider_kind (ADR-0017). The translator may
 		// inspect the body to choose the upstream path (Azure: extract `model`
@@ -194,6 +208,29 @@ func handleTranslatorError(w http.ResponseWriter, logger *slog.Logger, slug stri
 			"err", err,
 		)
 		writeProxyError(w, http.StatusBadRequest, "bad_request", "request translation failed")
+	}
+}
+
+// handleCredentialResolveError maps CredentialResolver errors to HTTP status
+// codes. ErrKVTimeout in mode=kv surfaces as 503 (transient); other failures
+// (missing kv_secret_name, malformed payload in KV, network errors with no
+// fallback) surface as 500.
+func handleCredentialResolveError(w http.ResponseWriter, logger *slog.Logger, slug string, targetID int64, err error) {
+	switch {
+	case errors.Is(err, proxyservice.ErrKVTimeout):
+		logger.Warn("proxy credential resolve: kv timeout",
+			"slug", slug,
+			"target_id", targetID,
+			"err", err,
+		)
+		writeProxyError(w, http.StatusServiceUnavailable, "kv_timeout", "credential resolution timed out")
+	default:
+		logger.Error("proxy credential resolve failed",
+			"slug", slug,
+			"target_id", targetID,
+			"err", err,
+		)
+		writeProxyError(w, http.StatusInternalServerError, "credential_unavailable", "failed to resolve target credentials")
 	}
 }
 
