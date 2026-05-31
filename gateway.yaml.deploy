@@ -1,0 +1,47 @@
+server:
+  port: 8080
+  read_timeout_seconds: 10
+  read_header_timeout_seconds: 5
+  write_timeout_seconds: 0
+  idle_timeout_seconds: 60
+  max_header_bytes: 1048576
+
+database:
+  driver: sqlserver
+  host: ${SQL_SERVER_HOST}
+  port: 1433
+  database: ${SQL_DATABASE_NAME}
+  user: ${SQL_USER}
+  password: ${DATABASE_PASSWORD}
+  schema: gogateway
+  encrypt: true
+  trust_server_certificate: false
+  max_conns: 20
+  min_conns: 2
+  encryption_key_hex: ${DB_ENCRYPTION_KEY_HEX}
+
+logging:
+  level: info
+  format: json
+  raw_prompt_logging: false
+
+models:
+  - public_name: gpt-4.1
+    deployment: gpt-4.1
+    provider: azure
+    cost_input_per_1k_brl: 0.0115
+    cost_output_per_1k_brl: 0.0460
+
+  - public_name: gpt-4.1-mini
+    deployment: gpt-4.1-mini
+    provider: azure
+    cost_input_per_1k_brl: 0.0023
+    cost_output_per_1k_brl: 0.0092
+
+  - public_name: gpt-4.1-nano
+    deployment: gpt-4.1-nano
+    provider: azure
+    cost_input_per_1k_brl: 0.0006
+    cost_output_per_1k_brl: 0.0023
+
+applications: []

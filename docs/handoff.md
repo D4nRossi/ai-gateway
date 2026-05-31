@@ -26,96 +26,199 @@ para persistência entre máquinas.
 
 ## 1. Estado em que paramos
 
-**Data:** sessão fechada em 2026-05-27 (noite, máquina Windows). Pacote da
-sessão: Onda 6 (latency breakdown) → fix Bug 1 (token mismatch) → ADR-0022 →
-atualização do CLAUDE.md → troca PostgreSQL → SQL Server completa →
-smoke test passou → reorganização do roadmap → spike Voice Live →
-ADR-0023 redigido (proposed) → **vault Obsidian populado com 55 notas em
-`KB/AI-Gateway/`**.
+**Data:** pausa em 2026-05-29 (durante deploy Windows). Status:
+**deploy Windows do gateway está em progresso, travado na fase de ACLs**
+(`E:\AIGateway` ficou com Owner sem permissão de Read após `icacls /deny`).
+Owner pediu pausa pra retomar depois.
 
-**Onda 7 (troca PG → SQL Server) está oficialmente entregue** — ADR-0022
-`accepted`. Smoke test rodou contra `BRSPVPDEV003`/`AzureAI_Gateway_hom`:
-migrations 001-010 aplicadas, 3 apps criadas via UI, 1 endpoint Azure,
-request `/v1/proxy/{slug}/chat/completions` respondeu 200 OK com header
-`X-Gateway-Latency-Breakdown` populado.
+**Detalhe operacional importante:** o MCP do Obsidian caiu durante a sessão
+e não voltou. Vault não foi atualizado com o material novo. Quando o MCP
+voltar, espelhar o conteúdo das seções abaixo + `docs/adrs/0024-0026` no
+vault.
 
-### O que está commitado (e validado em build/test)
+### Onde estamos no deploy Windows
 
-| Commit | Conteúdo |
+| Etapa | Status |
 |---|---|
-| `d79d05d` | Onda 6 — latency breakdown observável (ADR-0021) |
-| `f4b5e6e` | Fix Bug 1 — colisão de key_prefix em apps com nome similar (migration 009) |
-| `dd21169` | ADR-0022 + edits do working tree pré-SQL ("pre sql") |
-| `85e6b97` | docs(claude) — CLAUDE.md alinhado com ADR-0022 (T-SQL, deps) |
-| `bee7c6f` | Troca PostgreSQL → SQL Server completa: driver, migrations T-SQL, repos `internal/infra/mssql`, writers, config, main.go, admin-create |
+| Build do pacote `.zip` na Ubuntu workstation | ✅ feito (`ai-gateway-deploy-69ed91f.zip`) |
+| Transporte pro servidor + extração em `E:\AIGateway\` | ✅ feito (`bin/`, `configs/`, `migrations/`, `SHA256SUMS`) |
+| Pasta `logs/` no servidor | ❌ falta criar |
+| ACL inicial — script `/deny "Users:(W)"` quebrou | 🔥 **travado** — Administrator perdeu Read na pasta |
+| Cifrar `gateway.env` via DPAPI | ⏳ pendente (PowerShell pronto, falta executar) |
+| Migrations manuais (`migrate up`) | ⏳ pendente |
+| Instalar WinSW como serviço | ⏳ pendente |
+| Configurar IIS (URL Rewrite + ARR + cert TLS) | ⏳ pendente |
+| Smoke test (`/healthz`, login admin, chat) | ⏳ pendente |
 
-**Suite 100% verde:** `go vet ./...`, `go build ./...`, `go test -count=1 -race ./...` — 15 pacotes.
+### Decisões consolidadas pra esse deploy
 
-### Trabalho não-commitado (working tree na máquina Windows)
+| Item | Valor |
+|---|---|
+| Path raiz no servidor | `E:\AIGateway\` (disco E:) |
+| Service account | `sv_autoccms` (não-gMSA — senha vai no WinSW XML, opção B) |
+| Senha no XML | aceitar com ACL apertada; preferível gMSA no futuro |
+| `SECRET_PROVIDER` | `db` (sem Azure KV) |
+| `DPAPI_ENV_FILE` | `E:\AIGateway\configs\gateway.env.dpapi` |
+| `MIGRATIONS_AUTO_APPLY` | `false` (DBA roda manual) |
+| Azure Language no yaml V1 | comentado (Tier 2/3 PII só por regex local) |
+| Azure OpenAI no yaml V1 | removido (endpoints cadastrados via Console / proxy plane) |
+| SQL Server inicial | `BRSPVPDEV003.tpb.corp` (mesmo de homolog) |
+| Database | `AzureAI_Gateway_hom` |
+| SQL user | `usr_sist_AzureAI_Gateway_hom` |
+| `DB_ENCRYPTION_KEY_HEX` (gerado) | `4b3d200ab31e8ede05af67a70632db4e02c01630eac9d1d2e5f51935117bbea1` |
 
-⚠️ Quando trocar de máquina amanhã, **fazer commit ou stash** desses antes:
+⚠️ **A chave AES é viva.** Quem tiver acesso a esse arquivo + ao
+`gateway.env.dpapi` consegue derivar todos os secrets. Tratar como dado
+sensível conforme classificação corp.
 
-```
-M  .idea/workspace.xml                                  (ignorável)
-M  docs/how-it-works.md                                 (alinhamento pós-SQL Server)
-M  docs/roadmap.md                                      (reorg + Onda 8)
-M  internal/api/handlers/chat.go                        (Onda 6 — header X-Gateway-Latency-Breakdown)
-M  internal/usage/event.go                              (Onda 6 — 5 colunas latency)
-M  internal/usage/writer.go                             (Onda 6)
-?? docs/adrs/0021-latency-breakdown-observavel.md       (Onda 6)
-?? docs/adrs/0023-streaming-audio-bidirecional.md       (Onda 8 — proposed, ainda não lido pelo owner)
-?? docs/handoff.md                                      (este arquivo)
-?? internal/observability/trace.go                      (Onda 6)
-?? internal/observability/trace_test.go                 (Onda 6)
-?? migrations/008_usage_events_latency_breakdown.down.sql
-?? migrations/008_usage_events_latency_breakdown.up.sql
-?? _voicelive-spike/                                    (spike Voice Live — Onda 8)
-```
+### O que foi entregue nessa sessão (e pushado)
 
-**Sugestão de sequência de commits** antes de fechar a máquina Windows hoje:
-
-1. `feat(observability): latency breakdown (Onda 6, ADR-0021)` — trace.go, trace_test.go, chat.go, event.go, writer.go, migrations 008
-2. `docs(adr): adicionar ADR-0023 streaming áudio bidirecional (proposed)` — apenas o ADR-0023
-3. `spike(voice-live): cliente isolado para baseline de latência` — `_voicelive-spike/` inteiro
-4. `docs: atualizar roadmap (Onda 8), how-it-works (pós-SQL Server) e handoff` — docs/* atualizados
-
-### Próxima ação
-
-Sessão de 2026-05-28 fechou várias frentes; próxima onda é a decidir.
-
-**Entregue nessa sessão (commits a serem pushados):**
+Commits no `main` / `v2` (push confirmado pelo owner):
 
 - **Onda 4.5** — Target credentials no Key Vault (ADR-0020 `accepted`)
-- **ADR-0024** — Usage tracking no proxy plane (Playground agora aparece em `usage_events` + dashboards)
-- **ADR-0025** — `MIGRATIONS_AUTO_APPLY` toggle (default `true`; `false` em prod pra DBA controlar janela)
-- **ADR-0026 V1** — Secrets Windows sem KV: DPAPI cobre boot (4 secrets); `gogateway.secrets` + Always Encrypted cobre runtime (target creds Onda 4.5). Inclui:
+- **ADR-0024** — Usage tracking no proxy plane (Playground agora aparece em
+  `usage_events` + dashboards)
+- **ADR-0025** — `MIGRATIONS_AUTO_APPLY` toggle (default `true`; `false` em
+  prod pra DBA controlar janela)
+- **ADR-0026 V1** — Secrets Windows sem KV (DPAPI cobre boot; `gogateway.secrets`
+  + Always Encrypted cobre runtime). Componentes:
   - `internal/infra/dpapi/` (Windows-only via build tags; stub em Linux/macOS)
   - `internal/infra/secretsdb/` (drop-in pra `keyvault.SecretGetter` + `SecretSetter`)
-  - `migrations/012_gogateway_secrets.up.sql` (tabela base; AE manual via PowerShell no setup)
-  - `cmd/secrets/` (CLI 5 subcomandos: set/rotate/get/list/delete)
-  - main.go: env `SECRET_PROVIDER=kv\|db` decide backend; DPAPI loader em modo db
-  - `docs/deploy/windows.md §5.3` documenta setup completo
-- **Fase A polish** Dashboard + Observability (bugs corrigidos, skeletons matching colunas, validação YYYYMM, ordenação top spenders, tooltips, refresh)
-- **Fase B** Dashboard com 5 charts via recharts (timeseries requests + 4xx/5xx, latência avg+max, custo BRL área, top apps barra, tier pie)
-- **Manuais de deploy**: `docs/deploy/linux.md` (nginx + Docker Compose / systemd) e `docs/deploy/windows.md` (IIS + WinSW)
-- **Postman collection** em `docs/postman/ai-gateway.postman_collection.json` (15 requests, 7 folders, test script captura adminToken)
-- **Notas vault Obsidian** em `KB/AI-Gateway/Deploy/` (3 notas — `_MOC`, `Linux-NGINX-Docker`, `Windows-IIS-WinSW`)
+  - `migrations/012_gogateway_secrets.up.sql` (tabela base; AE manual via PowerShell)
+  - `cmd/secrets/` (CLI 5 subcomandos)
+  - `cmd/gateway/main.go`: env `SECRET_PROVIDER=kv|db` decide backend
+- **Fase A polish** Dashboard + Observability (bugs, skeletons, validações,
+  tooltips, refresh, ordenação top spenders)
+- **Fase B** Dashboard com 5 charts via recharts (timeseries requests +
+  4xx/5xx, latência avg+max, custo BRL área, top apps barra, tier pie)
+- **Manuais de deploy**: `docs/deploy/linux.md` + `docs/deploy/windows.md`
+- **Postman collection** em `docs/postman/`
+- **Script de build Windows** na raiz (`build-windows-deploy.sh`)
+- **Notas vault Obsidian** em `KB/AI-Gateway/Deploy/` (3 notas:
+  `_MOC`, `Linux-NGINX-Docker`, `Windows-IIS-WinSW`). 3 ADRs novas
+  (0024/0025/0026) ainda **não foram pra vault** porque o MCP caiu.
 
-**Próxima onda (a decidir):**
+### Como retomar (próxima sessão)
 
-1. **Cache de lookup** (§3.1 Desempenho, P1) — ~5-10ms ganho, baixo risco
-2. **SSO Entra ID / OIDC** (§3.3 Segurança, P1) — depende de App Registration no Entra corp
-3. **Modelos como CRUD + Page Models** (§3.4, P2)
-4. **Streaming SSE no proxy** (follow-up ADR-0024) — só faz sentido quando consumidores reais começarem a usar stream em produção
+Owner abre o Claude Code e diz "vamos continuar o deploy Windows":
+
+**Passo 0 — Reset ACL no servidor pra desbloquear**
+
+Fechar a janela do File Explorer. PowerShell como Administrator:
+
+```powershell
+takeown /F E:\AIGateway /R /D Y
+icacls E:\AIGateway /reset /T
+Get-ChildItem E:\AIGateway   # confirmar acesso restaurado
+```
+
+**Passo 1 — Aplicar ACL correta (sem o `deny` problemático)**
+
+```powershell
+$account = "DOMAIN\sv_autoccms"   # ← substituir DOMAIN pelo AD real
+
+# Administrators full + propagar
+icacls E:\AIGateway /grant "Administrators:(OI)(CI)F" /T
+
+# Criar logs/ se ainda não existe
+New-Item -ItemType Directory -Force -Path E:\AIGateway\logs | Out-Null
+
+# Permissões por pasta
+icacls E:\AIGateway\logs        /grant "${account}:(OI)(CI)M"  /T
+icacls E:\AIGateway\bin         /grant "${account}:(OI)(CI)RX" /T
+icacls E:\AIGateway\configs     /grant "${account}:(OI)(CI)R"  /T
+icacls E:\AIGateway\migrations  /grant "${account}:(OI)(CI)R"  /T
+
+# Trava o XML do serviço (senha dentro)
+icacls E:\AIGateway\bin\gateway-service.xml /inheritance:r
+icacls E:\AIGateway\bin\gateway-service.xml /grant "SYSTEM:(F)" "Administrators:(F)" "${account}:(R)"
+```
+
+⚠️ Atenção: **NÃO usar `/deny "Users:(W)"`** — bloqueia o próprio admin
+porque a conta de admin pertence ao grupo Users localmente e `deny` tem
+precedência sobre `allow`. Foi essa linha que travou na sessão de 2026-05-29.
+
+**Passo 2 — Cifrar `gateway.env` com DPAPI**
+
+```powershell
+$envContent = @"
+SQL_SERVER_HOST=BRSPVPDEV003.tpb.corp
+SQL_DATABASE_NAME=AzureAI_Gateway_hom
+SQL_USER=usr_sist_AzureAI_Gateway_hom
+DATABASE_PASSWORD=<SENHA_DO_USR_SIST_AZUREAI_GATEWAY_HOM>
+DB_ENCRYPTION_KEY_HEX=4b3d200ab31e8ede05af67a70632db4e02c01630eac9d1d2e5f51935117bbea1
+"@
+
+$bytes  = [System.Text.Encoding]::UTF8.GetBytes($envContent)
+$cipher = [System.Security.Cryptography.ProtectedData]::Protect(
+    $bytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
+[System.IO.File]::WriteAllBytes('E:\AIGateway\configs\gateway.env.dpapi', $cipher)
+
+icacls E:\AIGateway\configs\gateway.env.dpapi /inheritance:r
+icacls E:\AIGateway\configs\gateway.env.dpapi /grant "SYSTEM:(F)" "Administrators:(F)" "${account}:(R)"
+
+# Sanity check
+$enc = [System.IO.File]::ReadAllBytes('E:\AIGateway\configs\gateway.env.dpapi')
+$dec = [System.Security.Cryptography.ProtectedData]::Unprotect(
+    $enc, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
+[System.Text.Encoding]::UTF8.GetString($dec)
+# saída esperada: as 5 linhas KEY=VALUE
+```
+
+**Passo 3 — Aplicar migrations (do laptop/bastion com acesso ao SQL)**
+
+```bash
+export DATABASE_URL='sqlserver://usr_sist_AzureAI_Gateway_hom:<SENHA>@BRSPVPDEV003.tpb.corp:1433?database=AzureAI_Gateway_hom&encrypt=true&trustServerCertificate=false'
+
+migrate -database "$DATABASE_URL" -path migrations up
+migrate -database "$DATABASE_URL" -path migrations version
+# esperado: 12 (após adr-0026)
+```
+
+Se aparecer `dirty=1`, ver `docs/deploy/windows.md §6.3` ou seguir o
+padrão de cleanup que owner já fez na sessão da migration 011.
+
+**Passo 4 — Instalar e iniciar o WinSW**
+
+```powershell
+cd E:\AIGateway\bin
+.\gateway-service.exe install
+Start-Service AIGateway
+Get-Service AIGateway   # esperado: Status=Running
+Get-Content E:\AIGateway\logs\AIGateway.out.log -Tail 30
+```
+
+Se o serviço falhar, ver `AIGateway.err.log` e
+`AIGateway.wrapper.log`. Causas comuns:
+
+- `sv_autoccms` sem `Logon as a service` right → `secpol.msc`
+- DPAPI env file inacessível → conferir ACL do passo 1
+- Senha do user SQL errada → editar e re-cifrar `.env.dpapi`
+
+**Passo 5 — IIS** (URL Rewrite + ARR + cert TLS) — seguir
+`docs/deploy/windows.md §8`. Pré-req: módulos URL Rewrite 2.1 + ARR 3.0
+instalados (MSIs separados, baixar na workstation com internet).
+
+**Passo 6 — Smoke test** — seguir
+`docs/deploy/windows.md §9`.
 
 ### Frentes pendentes (sem ETA específica)
 
-- **Validação ao vivo da Onda 6** (Caminho 1: header + 1 query SQL).
+- **Re-sincronizar vault Obsidian** quando o MCP voltar:
+  - 3 ADRs novas (0024/0025/0026) precisam ser espelhadas em `KB/AI-Gateway/ADRs/`
+  - Atualizar `00-Index.md` adicionando os 3 ADRs e link pra `Deploy/_MOC`
+- **Validação ao vivo da Onda 6** (header de latency breakdown + 1 query SQL).
 - **Bug 2 — Acessos não persiste** — instrumentação adicionada, aguarda repro com DevTools Network.
 - **SSO Entra ID / OIDC** (P1 Segurança — ADR sem número ainda). Quando rolar, migration remove o `root` da mig 010.
 - **Anthropic / Gemini / Cohere adapters** pra usage extractor (ADR-0024 só cobre azure_openai + openai). Quando outro provider virar P1.
 - **Percentis p50/p95/p99** no timeseries do dashboard (hoje só avg+max). `PERCENTILE_CONT` no SQL Server precisa subquery dedicada.
 - **Rotação de chaves vazadas** da POC AgentFlow — owner postergou explicitamente em 2026-05-27.
+- **Azure Language como CRUD no DB** — owner pediu isso pra ter feature CRUD. Hoje removida do yaml V1 do prod, regex local cobre Tier 2/3 PII até a feature ficar pronta.
+- **Após deploy Windows estabilizar**, decidir entre:
+  - Cache de lookup (§3.1 Desempenho, P1)
+  - SSO Entra ID
+  - Modelos como CRUD + Page Models
+  - Streaming SSE no proxy
 
 ---
 

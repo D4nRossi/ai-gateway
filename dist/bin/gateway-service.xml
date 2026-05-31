@@ -1,0 +1,38 @@
+<service>
+  <id>AIGateway</id>
+  <name>AI Gateway</name>
+  <description>AI Gateway (Go) — proxy + governance para Azure OpenAI</description>
+
+  <executable>E:\AIGateway\bin\gateway.exe</executable>
+  <workingdirectory>E:\AIGateway</workingdirectory>
+
+  <serviceaccount>
+    <domain>tpb</domain>
+    <user>sv_autoccms</user>
+    <password>AOPFDIOPi8af980$%</password>
+    <allowservicelogonasservice>true</allowservicelogonasservice>
+  </serviceaccount>
+
+  <env name="SECRET_PROVIDER" value="db"/>
+  <env name="DPAPI_ENV_FILE" value="E:\AIGateway\configs\gateway.env.dpapi"/>
+  <env name="CONFIG_PATH" value="E:\AIGateway\configs\gateway.yaml"/>
+  <env name="LOG_LEVEL" value="info"/>
+  <env name="MIGRATIONS_AUTO_APPLY" value="false"/>
+  <env name="PROVIDER" value="azure"/>
+
+  <onfailure action="restart" delay="5 sec"/>
+  <onfailure action="restart" delay="10 sec"/>
+  <onfailure action="restart" delay="30 sec"/>
+
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>10</keepFiles>
+  </log>
+  <logpath>E:\AIGateway\logs</logpath>
+
+  <outfilepattern>.out.log</outfilepattern>
+  <errfilepattern>.err.log</errfilepattern>
+
+  <stoptimeout>30 sec</stoptimeout>
+  <priority>Normal</priority>
+</service>
