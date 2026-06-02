@@ -1,5 +1,6 @@
 using APIGateway.Admin.Api.Features.Applications;
 using APIGateway.Admin.Api.Features.Auth;
+using APIGateway.Admin.Api.Features.Endpoints;
 using APIGateway.Admin.Api.Features.Users;
 using APIGateway.Admin.Api.Infrastructure.Auditing;
 using APIGateway.Admin.Api.Infrastructure.Database;
@@ -92,6 +93,13 @@ adminV1.MapGroup("/applications")
     .MapApplicationsListGrants()
     .MapApplicationsGrant()
     .MapApplicationsRevoke();
+
+adminV1.MapGroup("/endpoints")
+    .MapEndpointsList()
+    .MapEndpointsGet()
+    .MapEndpointsCreate()
+    .MapEndpointsUpdate()
+    .MapEndpointsDelete();
 
 app.Run();
 return 0;
