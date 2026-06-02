@@ -8,7 +8,7 @@
 //   - SPEC.md §9.1 step 10 — post-validation (Tier 3 only)
 package postvalidation
 
-import "github.com/D4nRossi/ai-gateway/apps/gateway/internal/security/promptshield"
+import "github.com/D4nRossi/ai-gateway/apps/gateway/internal/governance/promptshield"
 
 // Validator performs post-generation output checks for Tier 3 requests.
 type Validator struct {

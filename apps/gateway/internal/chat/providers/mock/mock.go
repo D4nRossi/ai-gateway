@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/providers"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/chat/providers"
 )
 
 // MockProvider is a Provider implementation that returns canned responses.

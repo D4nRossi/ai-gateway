@@ -11,7 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/app/proxyservice"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/proxy/proxyservice"
 	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/config"
 	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/domain/endpoint"
 	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/observability"

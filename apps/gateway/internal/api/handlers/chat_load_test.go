@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/auth"
-	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/providers/mock"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/chat/providers/mock"
 )
 
 // ── Load & concurrency tests ──────────────────────────────────────────────────

@@ -16,12 +16,12 @@ import (
 	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/budget"
 	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/config"
 	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/observability"
-	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/providers"
-	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/security/azlanguage"
-	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/security/masking"
-	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/security/postvalidation"
-	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/security/promptshield"
-	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/tiers"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/chat/providers"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/governance/azlanguage"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/governance/masking"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/governance/postvalidation"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/governance/promptshield"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/governance/tiers"
 	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/usage"
 )
 

@@ -7,7 +7,7 @@ import (
 	"io"
 	"strings"
 
-	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/providers"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/chat/providers"
 )
 
 const (

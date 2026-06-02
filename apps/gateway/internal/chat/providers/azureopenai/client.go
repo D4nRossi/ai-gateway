@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/providers"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/chat/providers"
 )
 
 // Client is the Azure OpenAI HTTP client. Create via New.
