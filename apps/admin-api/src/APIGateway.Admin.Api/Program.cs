@@ -1,4 +1,5 @@
 using APIGateway.Admin.Api.Features.Auth;
+using APIGateway.Admin.Api.Features.Users;
 using APIGateway.Admin.Api.Infrastructure.Auditing;
 using APIGateway.Admin.Api.Infrastructure.Database;
 using APIGateway.Admin.Api.Infrastructure.Healthchecks;
@@ -74,6 +75,11 @@ var adminV1 = app.MapGroup("/admin/v1");
 adminV1.MapGroup("/auth")
     .MapLogin()
     .MapLogout();
+
+adminV1.MapGroup("/users")
+    .MapList()
+    .MapCreate()
+    .MapDeactivate();
 
 app.Run();
 return 0;
