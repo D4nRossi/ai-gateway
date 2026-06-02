@@ -1,10 +1,13 @@
 using APIGateway.Admin.Api.Features.Applications;
 using APIGateway.Admin.Api.Features.Auth;
 using APIGateway.Admin.Api.Features.Endpoints;
+using APIGateway.Admin.Api.Features.Endpoints.Targets;
 using APIGateway.Admin.Api.Features.Users;
 using APIGateway.Admin.Api.Infrastructure.Auditing;
+using APIGateway.Admin.Api.Infrastructure.Crypto;
 using APIGateway.Admin.Api.Infrastructure.Database;
 using APIGateway.Admin.Api.Infrastructure.Healthchecks;
+using APIGateway.Admin.Api.Infrastructure.KeyVault;
 using APIGateway.Admin.Api.Infrastructure.Migrations;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
@@ -42,6 +45,26 @@ var connectionString = builder.Configuration.GetConnectionString("Gateway")
 builder.Services.AddSingleton(new ConnectionFactory(connectionString));
 builder.Services.AddScoped<SessionAuthFilter>();
 builder.Services.AddSingleton<IAuditEventWriter, SqlAuditEventWriter>();
+
+// AES-256-GCM cipher pra credenciais de target (ADR-0012). Paridade exata com
+// o gateway Go, ambos lendo a mesma key (Database:EncryptionKeyHex).
+var encryptionKeyHex = builder.Configuration.GetValue<string>("Database:EncryptionKeyHex")
+    ?? throw new InvalidOperationException(
+        "Database:EncryptionKeyHex is required (64-char lowercase hex; env Database__EncryptionKeyHex).");
+builder.Services.AddSingleton(new AesGcmCipher(encryptionKeyHex));
+
+// Key Vault writer condicional — quando KeyVault:Uri esta vazio, registra
+// um stub que faz handlers retornarem 503 (paridade ErrKVUnavailable Go).
+var keyVaultUri = builder.Configuration.GetValue<string>("KeyVault:Uri");
+if (!string.IsNullOrWhiteSpace(keyVaultUri))
+{
+    builder.Services.AddSingleton<IKeyVaultSecretWriter>(
+        new KeyVaultSecretWriter(new Uri(keyVaultUri)));
+}
+else
+{
+    builder.Services.AddSingleton<IKeyVaultSecretWriter, UnavailableKeyVaultWriter>();
+}
 
 builder.Services
     .AddHealthChecks()
@@ -99,7 +122,11 @@ adminV1.MapGroup("/endpoints")
     .MapEndpointsGet()
     .MapEndpointsCreate()
     .MapEndpointsUpdate()
-    .MapEndpointsDelete();
+    .MapEndpointsDelete()
+    .MapEndpointsAddTarget()
+    .MapEndpointsUpdateTarget()
+    .MapEndpointsRemoveTarget()
+    .MapEndpointsMigrateTargetToKV();
 
 app.Run();
 return 0;
