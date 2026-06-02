@@ -1,5 +1,6 @@
 using APIGateway.Admin.Api.Features.Applications;
 using APIGateway.Admin.Api.Features.Auth;
+using APIGateway.Admin.Api.Features.Dashboard;
 using APIGateway.Admin.Api.Features.Endpoints;
 using APIGateway.Admin.Api.Features.Endpoints.Targets;
 using APIGateway.Admin.Api.Features.Observability;
@@ -134,6 +135,10 @@ adminV1.MapGroup("/endpoints")
 adminV1.MapObservabilityUsage()
        .MapObservabilityAudit()
        .MapObservabilityBudget();
+
+// Dashboard (read-only agregacoes): /admin/v1/dashboard/{timeseries,breakdown}
+adminV1.MapDashboardTimeseries()
+       .MapDashboardBreakdown();
 
 app.Run();
 return 0;
