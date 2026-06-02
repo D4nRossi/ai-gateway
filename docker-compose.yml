@@ -40,7 +40,7 @@ services:
   # ── AI Gateway ──────────────────────────────────────────────────────────────
   gateway:
     build:
-      context: .
+      context: ./apps/gateway
       dockerfile: Dockerfile
     ports:
       - "8080:8080"
