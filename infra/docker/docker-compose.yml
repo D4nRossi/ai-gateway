@@ -2,33 +2,38 @@
 #
 # Servicos:
 #   - nginx     : TLS terminator + routing 3-vias (infra/nginx/nginx.conf)
-#   - gateway   : Go data plane (apps/gateway/Dockerfile)
+#   - gateway   : Go data plane + admin Go (transicao; ADR-0027 Fase 5 desliga depois)
 #   - console   : React+Vite SPA estatica via nginx interno (apps/console/Dockerfile)
-#   - admin-api : .NET 10 admin plane (apps/admin-api/Dockerfile) — COMENTADO
-#                 durante a transicao Go-only. Descomentar quando Fase 3
-#                 estiver com todos os 27 slices migrados.
+#   - admin-api : .NET 10 admin plane (27/27 endpoints; nginx rola Auth desde Fase 4d)
 #
 # SQL Server eh externo (BRSPVPDEV003.tpb.corp) — nao roda em container
-# conforme ADR-0022. Container "admin-api" assume conectividade VPN.
+# conforme ADR-0022. Containers gateway/admin-api assumem conectividade VPN.
 #
 # Subir:
 #   cd infra/docker
 #   cp .env.example .env
-#   nano .env                # preencher segredos
+#   nano .env                # preencher segredos (KEYVAULT_URI, SQL_CONNECTION_STRING,
+#                            #                    DATABASE_ENCRYPTION_KEY_HEX, SP creds)
 #   docker compose up -d --build
 #
 # Logs:
-#   docker compose logs -f gateway
-#   docker compose logs -f nginx
+#   docker compose logs -f gateway     # Go data plane + admin Go (transicao)
+#   docker compose logs -f admin-api   # Serilog JSON do admin .NET
+#   docker compose logs -f nginx       # access_log JSON estruturado
 #
 # Status:
-#   docker compose ps
-#   docker compose exec nginx nginx -t
+#   docker compose ps                  # todos os 4 servicos -> "(healthy)"
+#   docker compose exec nginx nginx -t # validar config sintaxe
 #
-# Migrations (modo Go atual; .NET sera CLI separada ADR-0025):
-#   Gateway Go aplica automatico no boot (MIGRATIONS_AUTO_APPLY default true).
-#   Pra desabilitar, setar MIGRATIONS_AUTO_APPLY=false e rodar:
-#     docker compose exec gateway ./ai-gateway -- migrate
+# Migrations:
+#   - Gateway Go aplica via golang-migrate no boot quando MIGRATIONS_AUTO_APPLY=true.
+#     NAO ha subcomando CLI no binario gateway.exe — toggle off requer rodar
+#     o cliente `migrate` (golang-migrate/migrate) externamente no DB.
+#   - admin-api .NET roda DbUp por CLI separado (preserva ADR-0025):
+#       docker compose run --rm admin-api migrate up
+#       docker compose run --rm admin-api migrate status
+#     Bookkeeping separado: schema_migrations (Go) vs gogateway.SchemaVersions (.NET).
+#     Scripts .up.sql sao idempotentes — rodar ambos contra o mesmo schema eh seguro.
 #
 # References:
 #   - ADR-0022 — SQL Server corporativo

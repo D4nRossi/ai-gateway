@@ -39,6 +39,13 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0
 
 # tini não é necessário porque o entrypoint é o próprio dotnet (PID 1 sane).
 # tzdata + ca-certificates já vem no aspnet base image.
+#
+# wget é obrigatório pro HEALTHCHECK abaixo. A imagem aspnet:10.0 eh Debian
+# bookworm-slim e NÃO inclui wget por default — sem ele, Docker marca
+# container como unhealthy 100% das vezes. ~110KB adicional.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends wget \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY --from=builder /out ./

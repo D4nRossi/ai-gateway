@@ -4,9 +4,9 @@ Implementação .NET do admin plane do API Gateway (ADR-0027, ADR-0029).
 Substitui o admin plane Go (`apps/gateway/internal/api/admin/`) slice a slice
 sob `/admin/v1/*`. Stack pinada em [`CLAUDE.md §4.4`](../../CLAUDE.md).
 
-## Estado atual (Fase 3 — esqueleto + Auth piloto)
+## Estado atual (Fase 3 completa — 27/27 endpoints, Fase 4d nginx routing)
 
-Implementado:
+Implementado (atualizado 2026-06-02):
 
 - Minimal API .NET 10 com Serilog (JSON compacto pra stdout)
 - Dapper + `Microsoft.Data.SqlClient` em `Infrastructure/Database/`
@@ -14,22 +14,50 @@ Implementado:
   rodando como **CLI separado** (ADR-0025), bookkeeping em `gogateway.SchemaVersions`
 - Os 12 scripts T-SQL atuais portados como `EmbeddedResource` em
   `Infrastructure/Migrations/Scripts/`
-- Vertical slice **Auth** com paridade exata do handler Go:
-  - `POST /admin/v1/auth/login` — bcrypt cost=12 + token opaco 32B hex
-  - `DELETE /admin/v1/auth/logout`
-  - `SessionAuthFilter` (endpoint filter equivalente ao middleware Go)
-- `OpaqueTokenGenerator` — 32 bytes random → hex (`Convert.ToHexStringLower`)
-  + SHA-256 hex pra persistir
-- `AuditEventWriter` — INSERT em `gogateway.audit_events` paralelo ao Go
-- Healthchecks `/healthz` (liveness) e `/readyz` (SELECT 1 em SQL)
-- Dockerfile multi-stage (`sdk:10.0` → `aspnet:10.0`)
+- **AES-256-GCM cipher** (`AesGcmCipher`) com paridade BIT-A-BIT ADR-0012
+  (nonce 12B + ciphertext + tag 16B, AAD null) + `TargetAuthPlaintext`
+  com custom converter pra ordem PascalCase paridade Go json.Marshal
+- **Azure Key Vault writer** condicional (`IKeyVaultSecretWriter`) via
+  `DefaultAzureCredential` — registrado quando `KeyVault:Uri` setado;
+  stub `UnavailableKeyVaultWriter` retorna 503 quando não
+- **`OpaqueTokenGenerator`** — 32B random → hex + SHA-256 hex (paridade Go)
+- **`KeyPrefixDeriver`** — algoritmo bit-a-bit `gwk_{name24}` com Go
+- **`AuditEventWriter`** — INSERT em `gogateway.audit_events` paralelo
+- **`SessionAuthFilter`** + **`RequireRoleFilter`** — auth + RBAC viewer/operator/admin
+- **`ProviderConfigValidator`** — validação per-kind (azure_openai exige
+  api_version + model_to_deployment)
+- Healthchecks `/healthz` (liveness) e `/readyz` (SELECT 1)
+- Dockerfile multi-stage (`sdk:10.0` → `aspnet:10.0`) — instala wget
+  pra HEALTHCHECK Docker
 
-Não implementado ainda (próximos PRs slices):
+### 9 slices, 27 endpoints
 
-- Users / Applications / RotateKey+Grants / ProxyEndpoints / Targets /
-  MigrateTargetToKV / Observability / Dashboard
-- Tests (xUnit + Testcontainers — Fase 3.3)
-- nginx routing (Fase 4)
+| Slice | Endpoints | Role |
+|---|---|---|
+| **Auth** | POST `/auth/login`, DELETE `/auth/logout` | anônimo / sessão |
+| **Users** | GET / POST `/users`, DELETE `/users/{id}` | admin |
+| **Applications** | List / Get / Create / Update / Delete | operator |
+| **Applications RotateKey + Grants** | POST `/{id}/rotate-key`, GET `/{id}/grants`, POST/DELETE `/{id}/grants/{epID}` | operator |
+| **Endpoints** | List / Get / Create / Update / Delete | operator |
+| **Targets** | POST `/{id}/targets`, PUT / DELETE `/{id}/targets/{tid}`, POST `/{id}/targets/{tid}/migrate-to-kv` | operator |
+| **Observability** | GET `/usage`, GET `/audit`, GET `/budget` | viewer |
+| **Dashboard** | GET `/dashboard/timeseries`, GET `/dashboard/breakdown` | viewer |
+
+### Tests scaffold (Fase 3.y)
+
+- `tests/APIGateway.Admin.UnitTests/` — xUnit + FluentAssertions, sem
+  container. Cobre cipher, token, key-prefix, validators, role filter,
+  JSON converter (~40 tests)
+- `tests/APIGateway.Admin.IntegrationTests/` — Testcontainers.MsSql 2022
+  + `WebApplicationFactory<Program>` + `SqlServerFixture` rodando DbUp.
+  Piloto: 6 tests E2E do slice Auth
+
+### Runtime status
+
+- nginx (`infra/nginx/nginx.conf`) roteia **`/admin/v1/auth/{login,logout}` pra cá**
+- Demais `/admin/v1/*` continuam no gateway Go até **Fase 5** desligar admin Go
+- Migration ownership compartilhado durante a transição (Go aplica via
+  golang-migrate; .NET via DbUp CLI separado, bookkeeping isolado)
 
 ## Estrutura de pastas
 
