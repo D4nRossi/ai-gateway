@@ -1,0 +1,11 @@
+# Não copiar artefatos de build local (Rider/VS/dotnet) pro contexto Docker.
+**/bin/
+**/obj/
+**/.idea/
+**/.vs/
+**/*.user
+**/TestResults/
+.dockerignore
+Dockerfile
+README.md
+tests/

@@ -1,0 +1,34 @@
+<Project>
+  <!--
+    Directory.Build.props — propriedades de build aplicadas a todos os csproj
+    sob apps/admin-api/. Centraliza versão do framework, regras de qualidade e
+    metadata do projeto (ADR-0027).
+
+    References:
+      - CLAUDE.md §4.4 — stack .NET autorizada (Nullable, TreatWarningsAsErrors)
+      - ADR-0027 — admin plane .NET 10 + Dapper + DbUp + Minimal API
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+
+    <!-- Qualidade: nullable obrigatório e warnings = erro (CLAUDE.md §4.4) -->
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsAsErrors>nullable</WarningsAsErrors>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Reprodutibilidade: source-deterministic, sem suspeita de bytes randômicos -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+
+    <!-- Metadata genérica do projeto -->
+    <Authors>Daniel Rossi de Amorim</Authors>
+    <Company>Teleperformance Brasil — Digital Innovation</Company>
+    <Product>API Gateway — Admin Plane</Product>
+
+    <!-- Política de release: APIGateway.Admin.Api é executável, não biblioteca -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+</Project>

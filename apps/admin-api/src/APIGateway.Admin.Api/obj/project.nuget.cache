@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "dgSpecHash": "LFxf6sXDyBU=",
+  "success": false,
+  "projectFilePath": "/home/daniel/projects/ai-gateway/apps/admin-api/src/APIGateway.Admin.Api/APIGateway.Admin.Api.csproj",
+  "expectedPackageFiles": [],
+  "logs": [
+    {
+      "code": "NU1510",
+      "level": "Error",
+      "message": "Warning As Error: PackageReference Microsoft.Extensions.Diagnostics.HealthChecks will not be pruned. Consider removing this package from your dependencies, as it is likely unnecessary.",
+      "projectPath": "/home/daniel/projects/ai-gateway/apps/admin-api/src/APIGateway.Admin.Api/APIGateway.Admin.Api.csproj",
+      "filePath": "/home/daniel/projects/ai-gateway/apps/admin-api/src/APIGateway.Admin.Api/APIGateway.Admin.Api.csproj",
+      "libraryId": "Microsoft.Extensions.Diagnostics.HealthChecks",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    },
+    {
+      "code": "NU1301",
+      "level": "Error",
+      "message": "Unable to load the service index for source https://api.nuget.org/v3/index.json.\n  The HTTP request to 'GET https://api.nuget.org/v3/index.json' has timed out after 100000ms.",
+      "projectPath": "/home/daniel/projects/ai-gateway/apps/admin-api/src/APIGateway.Admin.Api/APIGateway.Admin.Api.csproj",
+      "filePath": "/home/daniel/projects/ai-gateway/apps/admin-api/src/APIGateway.Admin.Api/APIGateway.Admin.Api.csproj",
+      "targetGraphs": []
+    }
+  ]
+}

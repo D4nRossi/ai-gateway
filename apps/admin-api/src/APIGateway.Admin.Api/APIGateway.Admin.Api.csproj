@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!--
+    APIGateway.Admin.Api — Minimal API + Dapper + DbUp (ADR-0027).
+    Versões NuGet pinadas conforme CLAUDE.md §4.4. Bumps exigem ADR.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>APIGateway.Admin.Api</RootNamespace>
+    <AssemblyName>APIGateway.Admin.Api</AssemblyName>
+    <UserSecretsId>apigateway-admin-api</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Persistência: Dapper + SQL Server driver (sem EF Core — ADR-0027) -->
+    <PackageReference Include="Dapper" Version="2.1.66" />
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.0.2" />
+
+    <!-- Migrations: DbUp roda os scripts T-SQL como Resources embedded -->
+    <PackageReference Include="dbup-sqlserver" Version="6.0.4" />
+
+    <!-- Auth: bcrypt cost=12 (paridade ADR-0011) -->
+    <PackageReference Include="BCrypt.Net-Next" Version="4.0.3" />
+
+    <!-- Observability: Serilog -> JSON stdout (CLAUDE.md §4.4) -->
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+    <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
+
+    <!--
+      Health checks pra /healthz e /readyz vêm transitivamente do
+      Microsoft.NET.Sdk.Web em .NET 10 (Microsoft.Extensions.Diagnostics.HealthChecks
+      faz parte do FrameworkReference implícito). Adicionar explicitamente
+      dispara NU1510 ("would not be pruned") — não precisa.
+    -->
+
+    <!-- Azure (necessário pra MigrateTargetToKV mais adiante; já registrado pra DI -->
+
+    <PackageReference Include="Azure.Identity" Version="1.13.2" />
+    <PackageReference Include="Azure.Security.KeyVault.Secrets" Version="4.7.0" />
+
+    <!-- OpenAPI: Swashbuckle gera contracts/admin-api.openapi.yaml -->
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
+    <PackageReference Include="Swashbuckle.AspNetCore" Version="7.2.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Scripts T-SQL embedded como Resources pro DbUp ler em ordem por nome -->
+    <EmbeddedResource Include="Infrastructure\Migrations\Scripts\*.sql" />
+  </ItemGroup>
+</Project>

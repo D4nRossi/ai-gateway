@@ -1,0 +1,20 @@
+
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+# APIGateway.Admin — admin plane do API Gateway (ADR-0027).
+# Solution gerencia o projeto Minimal API + .NET 10 + Dapper + DbUp.
+# Tests ficarão em apps/admin-api/tests/ em PR subsequente.
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "APIGateway.Admin.Api", "src\APIGateway.Admin.Api\APIGateway.Admin.Api.csproj", "{1A2B3C4D-5E6F-7890-ABCD-EF1234567890}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{1A2B3C4D-5E6F-7890-ABCD-EF1234567890}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1A2B3C4D-5E6F-7890-ABCD-EF1234567890}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1A2B3C4D-5E6F-7890-ABCD-EF1234567890}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1A2B3C4D-5E6F-7890-ABCD-EF1234567890}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
