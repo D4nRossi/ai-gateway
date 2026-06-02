@@ -120,8 +120,8 @@ Se você está usando os IDEs JetBrains, esse é o caminho mais limpo: o `.env` 
 3. Preencha:
    - **Name**: `gateway`
    - **Run kind**: `Package`
-   - **Package path**: `github.com/D4nRossi/ai-gateway/cmd/gateway`
-   - **Working directory**: raiz do projeto (deve já vir preenchido — confira que aponta pra pasta que contém `configs/` e `migrations/`, senão a app não acha o YAML nem as migrations)
+   - **Package path**: `github.com/D4nRossi/ai-gateway/apps/gateway/cmd/gateway`
+   - **Working directory**: `apps/gateway/` (precisa conter `configs/`, e a pasta `migrations/` ainda continua na raiz do repo enquanto a Fase 3 de admin-api .NET não migra o schema — ajuste `CONFIG_PATH`/migrations conforme env)
    - **Environment**: clique no ícone à direita. Versões recentes do GoLand têm o campo **"Paths to '.env' files (separated with semicolon)"** — aponte para o `.env` na raiz. Alternativas se essa opção não aparecer:
      - Instalar o plugin **EnvFile** (Settings → Plugins → Marketplace) — adiciona uma aba "EnvFile" na Run Configuration onde você marca o `.env`.
      - Ou colar as variáveis uma a uma no campo "Environment variables" (formato `KEY=VALUE;KEY2=VALUE2`).
@@ -140,7 +140,7 @@ Se você está usando os IDEs JetBrains, esse é o caminho mais limpo: o `.env` 
 Mesma receita, mudando:
 
 - **Name**: `admin-create`
-- **Package path**: `github.com/D4nRossi/ai-gateway/cmd/admin-create`
+- **Package path**: `github.com/D4nRossi/ai-gateway/apps/gateway/cmd/admin-create`
 - **Program arguments**: `-username daniel -role admin`
 - **Environment**: mesmo `.env`
 

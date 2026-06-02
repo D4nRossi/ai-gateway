@@ -1,0 +1,777 @@
+// Package adminservice implements the application-layer use cases for the admin plane.
+// It orchestrates the domain repositories (application, endpoint, admin) and owns all
+// business logic that does not belong in handlers or infrastructure:
+//
+//   - Admin authentication: bcrypt verification, opaque session token generation (ADR-0011)
+//   - API key generation: cryptographically random secret, key prefix derivation, SHA-256 hash
+//   - Application lifecycle: create (with initial key), update, delete, key rotation
+//   - Proxy endpoint lifecycle: create, update, delete, target management, access grants
+//   - Admin user management: create, update, deactivate
+//
+// The package imports only domain types and Go stdlib. It has no knowledge of HTTP,
+// SQL, or wire formats, keeping it fully unit-testable without infrastructure (ADR-0015).
+//
+// References:
+//   - ADR-0009 — DB-backed admin plane
+//   - ADR-0011 — opaque session token authentication
+//   - ADR-0015 — app layer owns business logic; imports domain, not infra
+package adminservice
+
+import (
+	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"regexp"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
+
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/domain/admin"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/domain/application"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/domain/endpoint"
+	"github.com/D4nRossi/ai-gateway/apps/gateway/internal/infra/keyvault"
+)
+
+const (
+	// bcryptCost is the work factor for hashing admin passwords.
+	// Cost 12 takes ~250ms on modern hardware, making offline dictionary attacks expensive.
+	bcryptCost = 12
+
+	// defaultSessionTTL is used when no explicit TTL is configured.
+	defaultSessionTTL = 8 * time.Hour
+
+	// keyPrefixMaxLen is the maximum number of alphanumeric characters taken from the
+	// app name to form the API key prefix (after the "gwk_" literal).
+	//
+	// Reasoning: 10 chars was too tight — application names sharing the first ~10 ASCII
+	// letters (e.g. "Aplicacao Tier 1" / "Aplicacao Tier 3" both collapse to
+	// "gwk_aplicacaot") collided in api_keys.key_prefix. Because the column lacked a
+	// UNIQUE constraint, GetAPIKeyByPrefix returned a non-deterministic row when two
+	// active keys shared a prefix, surfacing as intermittent "token mismatch" 401s.
+	// 24 chars accommodates realistic app names (the applications.name column itself
+	// is VARCHAR(64)). Defense in depth: migration 009 adds a partial UNIQUE index on
+	// key_prefix so any residual collision fails fast at INSERT instead of silently.
+	keyPrefixMaxLen = 24
+)
+
+// ErrInvalidCredentials is returned by Login when the username does not exist or the
+// password does not match the stored bcrypt hash. The two cases are deliberately
+// indistinguishable to prevent username enumeration (ADR-0011).
+var ErrInvalidCredentials = errors.New("invalid credentials")
+
+// ErrInvalidProvider is returned by Create/UpdateEndpoint when ProviderKind is
+// not in the supported enum (ADR-0016).
+var ErrInvalidProvider = errors.New("invalid provider kind")
+
+// ErrInvalidProviderConfig is returned by Create/UpdateEndpoint when the
+// provider_config JSON does not satisfy the shape required by ProviderKind
+// (ADR-0017). The wrapped error message names the missing field so the UI can
+// surface it directly.
+var ErrInvalidProviderConfig = errors.New("invalid provider_config")
+
+// Service is the admin application service. It is safe for concurrent use.
+type Service struct {
+	apps       application.Repository
+	endpoints  endpoint.Repository
+	admins     admin.Repository
+	logger     *slog.Logger
+	sessionTTL time.Duration
+
+	// kvSetter is optional. Non-nil enables MigrateTargetToKV (ADR-0020).
+	// Wire via WithKVSetter from cmd/gateway after the Key Vault client is
+	// initialized; remains nil when KEYVAULT_URI is unset (V1 dev setup).
+	kvSetter keyvault.SecretSetter
+}
+
+// New constructs a Service. sessionTTL controls how long admin sessions stay valid;
+// pass 0 to use the 8-hour default.
+//
+// References:
+//   - ADR-0011 — session TTL is configurable
+func New(
+	apps application.Repository,
+	eps endpoint.Repository,
+	admins admin.Repository,
+	logger *slog.Logger,
+	sessionTTL time.Duration,
+) *Service {
+	if sessionTTL <= 0 {
+		sessionTTL = defaultSessionTTL
+	}
+	return &Service{
+		apps:       apps,
+		endpoints:  eps,
+		admins:     admins,
+		logger:     logger,
+		sessionTTL: sessionTTL,
+	}
+}
+
+// WithKVSetter installs the Key Vault writer used by MigrateTargetToKV. The
+// Service may be constructed without it (KEYVAULT_URI unset); migrations will
+// surface a clear error instead of silently no-oping.
+//
+// References:
+//   - ADR-0020 — credential storage mode per target
+//   - ADR-0018 — Key Vault client lifecycle
+func (s *Service) WithKVSetter(kv keyvault.SecretSetter) *Service {
+	s.kvSetter = kv
+	return s
+}
+
+// ── Authentication ────────────────────────────────────────────────────────────
+
+// Login verifies admin credentials and, on success, creates a session.
+// Returns the raw session token (to be given to the client), the session record,
+// and the authenticated user. The raw token is never stored; only its SHA-256
+// hash is persisted (ADR-0011).
+//
+// Returns ErrInvalidCredentials for both unknown username and wrong password
+// (prevents username enumeration).
+func (s *Service) Login(ctx context.Context, username, password string) (rawToken string, session admin.AdminSession, user admin.AdminUser, err error) {
+	user, err = s.admins.GetUserByUsername(ctx, username)
+	if err != nil {
+		if errors.Is(err, admin.ErrNotFound) {
+			// Run bcrypt on a dummy hash to make timing consistent (prevents enumeration).
+			_ = bcrypt.CompareHashAndPassword([]byte("$2a$12$dummy"), []byte(password))
+			return "", admin.AdminSession{}, admin.AdminUser{}, ErrInvalidCredentials
+		}
+		return "", admin.AdminSession{}, admin.AdminUser{}, fmt.Errorf("looking up admin user: %w", err)
+	}
+
+	if err = bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		return "", admin.AdminSession{}, admin.AdminUser{}, ErrInvalidCredentials
+	}
+
+	rawToken, err = generateRawToken()
+	if err != nil {
+		return "", admin.AdminSession{}, admin.AdminUser{}, err
+	}
+
+	newSession := admin.AdminSession{
+		AdminUserID: user.ID,
+		TokenHash:   hashToken(rawToken),
+		ExpiresAt:   time.Now().UTC().Add(s.sessionTTL),
+	}
+	newSession, err = s.admins.CreateSession(ctx, newSession)
+	if err != nil {
+		return "", admin.AdminSession{}, admin.AdminUser{}, fmt.Errorf("creating admin session: %w", err)
+	}
+
+	s.logger.Info("admin login",
+		"username", user.Username,
+		"role", string(user.Role),
+		"session_id", newSession.ID,
+		"expires_at", newSession.ExpiresAt,
+	)
+	return rawToken, newSession, user, nil
+}
+
+// Logout revokes the session identified by sessionID.
+func (s *Service) Logout(ctx context.Context, sessionID int64) error {
+	if err := s.admins.RevokeSession(ctx, sessionID); err != nil {
+		return fmt.Errorf("revoking session id=%d: %w", sessionID, err)
+	}
+	return nil
+}
+
+// ValidateSession looks up an active session by the raw (client-facing) token.
+// Returns the matched session and the owning user, or admin.ErrNotFound if the
+// token is invalid, expired, or revoked.
+func (s *Service) ValidateSession(ctx context.Context, rawToken string) (admin.AdminSession, admin.AdminUser, error) {
+	hash := hashToken(rawToken)
+
+	session, err := s.admins.GetSessionByTokenHash(ctx, hash)
+	if err != nil {
+		return admin.AdminSession{}, admin.AdminUser{}, fmt.Errorf("validating session: %w", err)
+	}
+
+	user, err := s.admins.GetUser(ctx, session.AdminUserID)
+	if err != nil {
+		return admin.AdminSession{}, admin.AdminUser{}, fmt.Errorf("loading session user: %w", err)
+	}
+	return session, user, nil
+}
+
+// ── Admin user management ─────────────────────────────────────────────────────
+
+// CreateAdminUser creates a new admin user, hashing the plaintext password with bcrypt.
+// The caller is responsible for ensuring only admin-role users call this endpoint
+// (enforced by the RequireRole middleware in the HTTP layer).
+func (s *Service) CreateAdminUser(ctx context.Context, username, password string, role admin.Role) (admin.AdminUser, error) {
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	if err != nil {
+		return admin.AdminUser{}, fmt.Errorf("hashing password: %w", err)
+	}
+
+	user := admin.AdminUser{
+		Username:     username,
+		PasswordHash: string(hash),
+		Role:         role,
+		Active:       true,
+	}
+	user, err = s.admins.CreateUser(ctx, user)
+	if err != nil {
+		return admin.AdminUser{}, fmt.Errorf("creating admin user %q: %w", username, err)
+	}
+
+	s.logger.Info("admin user created", "username", username, "role", string(role))
+	return user, nil
+}
+
+// ListAdminUsers returns all admin users.
+func (s *Service) ListAdminUsers(ctx context.Context) ([]admin.AdminUser, error) {
+	users, err := s.admins.ListUsers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing admin users: %w", err)
+	}
+	return users, nil
+}
+
+// DeactivateAdminUser sets a user as inactive and revokes all their active sessions.
+func (s *Service) DeactivateAdminUser(ctx context.Context, userID int64) error {
+	user, err := s.admins.GetUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("getting admin user id=%d: %w", userID, err)
+	}
+
+	user.Active = false
+	if _, err := s.admins.UpdateUser(ctx, user); err != nil {
+		return fmt.Errorf("deactivating admin user id=%d: %w", userID, err)
+	}
+
+	if err := s.admins.RevokeAllUserSessions(ctx, userID); err != nil {
+		// Log but don't fail — the user is already inactive, sessions will expire naturally.
+		s.logger.Warn("failed to revoke sessions for deactivated user",
+			"user_id", userID, "err", err,
+		)
+	}
+	return nil
+}
+
+// ── Application management ────────────────────────────────────────────────────
+
+// CreateApplication creates a new Application with an initial API key.
+// Returns the created application, the raw (client-facing) API token, and any error.
+// The raw token is returned exactly once and never stored (ADR-0009, ADR-0011).
+func (s *Service) CreateApplication(ctx context.Context, app application.Application) (application.Application, string, error) {
+	app.Active = true
+
+	rawSecret, err := generateRawToken()
+	if err != nil {
+		return application.Application{}, "", err
+	}
+
+	prefix := deriveKeyPrefix(app.Name)
+	fullToken := prefix + "_" + rawSecret
+
+	key := application.APIKey{
+		KeyPrefix: prefix,
+		KeyHash:   hashToken(fullToken),
+	}
+
+	createdApp, _, err := s.apps.CreateWithKey(ctx, app, key)
+	if err != nil {
+		return application.Application{}, "", fmt.Errorf("creating application %q with key: %w", app.Name, err)
+	}
+
+	s.logger.Info("application created",
+		"application_name", createdApp.Name,
+		"tier", string(createdApp.Tier),
+		"key_prefix", prefix,
+	)
+	return createdApp, fullToken, nil
+}
+
+// GetApplication retrieves an Application by ID.
+func (s *Service) GetApplication(ctx context.Context, id int64) (application.Application, error) {
+	app, err := s.apps.Get(ctx, id)
+	if err != nil {
+		return application.Application{}, fmt.Errorf("getting application id=%d: %w", id, err)
+	}
+	return app, nil
+}
+
+// ListApplications returns all applications.
+func (s *Service) ListApplications(ctx context.Context) ([]application.Application, error) {
+	apps, err := s.apps.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing applications: %w", err)
+	}
+	return apps, nil
+}
+
+// UpdateApplication persists changes to an existing application.
+func (s *Service) UpdateApplication(ctx context.Context, app application.Application) (application.Application, error) {
+	updated, err := s.apps.Update(ctx, app)
+	if err != nil {
+		return application.Application{}, fmt.Errorf("updating application id=%d: %w", app.ID, err)
+	}
+	return updated, nil
+}
+
+// DeleteApplication soft-deletes an application.
+func (s *Service) DeleteApplication(ctx context.Context, id int64) error {
+	if err := s.apps.Delete(ctx, id); err != nil {
+		return fmt.Errorf("deleting application id=%d: %w", id, err)
+	}
+	return nil
+}
+
+// RotateAPIKey atomically generates a new API key for an application and returns the
+// raw (client-facing) token. The previous key stops being valid immediately (ADR-0009).
+func (s *Service) RotateAPIKey(ctx context.Context, applicationID int64) (string, error) {
+	app, err := s.apps.Get(ctx, applicationID)
+	if err != nil {
+		return "", fmt.Errorf("getting application id=%d for key rotation: %w", applicationID, err)
+	}
+
+	rawSecret, err := generateRawToken()
+	if err != nil {
+		return "", err
+	}
+
+	prefix := deriveKeyPrefix(app.Name)
+	fullToken := prefix + "_" + rawSecret
+
+	newKey := application.APIKey{
+		KeyPrefix: prefix,
+		KeyHash:   hashToken(fullToken),
+	}
+
+	if _, err := s.apps.RotateAPIKey(ctx, applicationID, newKey); err != nil {
+		return "", fmt.Errorf("rotating api key for app id=%d: %w", applicationID, err)
+	}
+
+	s.logger.Info("api key rotated",
+		"application_name", app.Name,
+		"key_prefix", prefix,
+	)
+	return fullToken, nil
+}
+
+// ── Endpoint management ───────────────────────────────────────────────────────
+
+// CreateEndpoint creates a new proxy endpoint.
+//
+// Defaults applied here:
+//   - LBStrategy: round_robin
+//   - ProviderKind: custom (passthrough genérico) — ADR-0016
+//   - ProviderConfig: empty map when nil (kind-specific shape validated below)
+//
+// Validation:
+//   - ProviderKind must be a value enumerated in domain/endpoint — ErrInvalidProvider
+//   - ProviderConfig must satisfy the per-kind shape — ErrInvalidProviderConfig (ADR-0017)
+func (s *Service) CreateEndpoint(ctx context.Context, ep endpoint.ProxyEndpoint) (endpoint.ProxyEndpoint, error) {
+	ep.Active = true
+	if ep.LBStrategy == "" {
+		ep.LBStrategy = endpoint.LBRoundRobin
+	}
+	if ep.ProviderKind == "" {
+		ep.ProviderKind = endpoint.ProviderCustom
+	}
+	if !ep.ProviderKind.Valid() {
+		return endpoint.ProxyEndpoint{}, fmt.Errorf("provider %q: %w", ep.ProviderKind, ErrInvalidProvider)
+	}
+	if ep.ProviderConfig == nil {
+		ep.ProviderConfig = endpoint.ProviderConfig{}
+	}
+	if err := validateProviderConfig(ep.ProviderKind, ep.ProviderConfig); err != nil {
+		return endpoint.ProxyEndpoint{}, err
+	}
+
+	created, err := s.endpoints.Create(ctx, ep)
+	if err != nil {
+		return endpoint.ProxyEndpoint{}, fmt.Errorf("creating endpoint %q: %w", ep.Slug, err)
+	}
+	return created, nil
+}
+
+// GetEndpoint retrieves a proxy endpoint by ID, including its active targets.
+func (s *Service) GetEndpoint(ctx context.Context, id int64) (endpoint.ProxyEndpoint, error) {
+	ep, err := s.endpoints.Get(ctx, id)
+	if err != nil {
+		return endpoint.ProxyEndpoint{}, fmt.Errorf("getting endpoint id=%d: %w", id, err)
+	}
+	return ep, nil
+}
+
+// ListEndpoints returns all proxy endpoints without their target lists.
+func (s *Service) ListEndpoints(ctx context.Context) ([]endpoint.ProxyEndpoint, error) {
+	eps, err := s.endpoints.List(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing endpoints: %w", err)
+	}
+	return eps, nil
+}
+
+// UpdateEndpoint persists changes to an existing endpoint.
+// Same validation rules as CreateEndpoint (ADR-0016, ADR-0017).
+func (s *Service) UpdateEndpoint(ctx context.Context, ep endpoint.ProxyEndpoint) (endpoint.ProxyEndpoint, error) {
+	if ep.ProviderKind == "" {
+		ep.ProviderKind = endpoint.ProviderCustom
+	}
+	if !ep.ProviderKind.Valid() {
+		return endpoint.ProxyEndpoint{}, fmt.Errorf("provider %q: %w", ep.ProviderKind, ErrInvalidProvider)
+	}
+	if ep.ProviderConfig == nil {
+		ep.ProviderConfig = endpoint.ProviderConfig{}
+	}
+	if err := validateProviderConfig(ep.ProviderKind, ep.ProviderConfig); err != nil {
+		return endpoint.ProxyEndpoint{}, err
+	}
+
+	updated, err := s.endpoints.Update(ctx, ep)
+	if err != nil {
+		return endpoint.ProxyEndpoint{}, fmt.Errorf("updating endpoint id=%d: %w", ep.ID, err)
+	}
+	return updated, nil
+}
+
+// validateProviderConfig enforces the per-kind required shape of provider_config
+// at the admin layer, before persistence. Keeps invalid endpoints from being
+// saved so the proxy plane never encounters one at request time (ADR-0017).
+//
+// Reasoning: putting this validation here (and not in the domain or repo)
+// matches ADR-0015 — business rules live in the application layer; domain types
+// stay value-shaped, infra stays pure persistence.
+func validateProviderConfig(kind endpoint.ProviderKind, cfg endpoint.ProviderConfig) error {
+	switch kind {
+	case endpoint.ProviderAzureOpenAI:
+		apiVersion, _ := cfg["api_version"].(string)
+		if apiVersion == "" {
+			return fmt.Errorf("%w: azure_openai requires \"api_version\" (e.g. \"2025-01-01-preview\")",
+				ErrInvalidProviderConfig)
+		}
+		raw, ok := cfg["model_to_deployment"]
+		if !ok {
+			return fmt.Errorf("%w: azure_openai requires \"model_to_deployment\" mapping",
+				ErrInvalidProviderConfig)
+		}
+		m, ok := raw.(map[string]any)
+		if !ok {
+			return fmt.Errorf("%w: \"model_to_deployment\" must be an object",
+				ErrInvalidProviderConfig)
+		}
+		if len(m) == 0 {
+			return fmt.Errorf("%w: \"model_to_deployment\" must list at least one model",
+				ErrInvalidProviderConfig)
+		}
+		for k, v := range m {
+			s, ok := v.(string)
+			if !ok || s == "" {
+				return fmt.Errorf("%w: model_to_deployment[%q] must be a non-empty string",
+					ErrInvalidProviderConfig, k)
+			}
+		}
+	default:
+		// Other kinds accept any (or no) provider_config for now. Add cases here
+		// as new translators introduce required fields.
+	}
+	return nil
+}
+
+// DeleteEndpoint soft-deletes a proxy endpoint.
+func (s *Service) DeleteEndpoint(ctx context.Context, id int64) error {
+	if err := s.endpoints.Delete(ctx, id); err != nil {
+		return fmt.Errorf("deleting endpoint id=%d: %w", id, err)
+	}
+	return nil
+}
+
+// AddTarget adds a new upstream target to a proxy endpoint. The target's auth
+// credentials are encrypted by the repository layer (ADR-0012).
+func (s *Service) AddTarget(ctx context.Context, t endpoint.Target) (endpoint.Target, error) {
+	t.Active = true
+	if t.Weight <= 0 {
+		t.Weight = 1
+	}
+	created, err := s.endpoints.AddTarget(ctx, t)
+	if err != nil {
+		return endpoint.Target{}, fmt.Errorf("adding target to endpoint id=%d: %w", t.EndpointID, err)
+	}
+	return created, nil
+}
+
+// UpdateTarget persists changes to a target (including re-encrypting its credentials).
+func (s *Service) UpdateTarget(ctx context.Context, t endpoint.Target) (endpoint.Target, error) {
+	updated, err := s.endpoints.UpdateTarget(ctx, t)
+	if err != nil {
+		return endpoint.Target{}, fmt.Errorf("updating target id=%d: %w", t.ID, err)
+	}
+	return updated, nil
+}
+
+// RemoveTarget soft-deletes a target.
+func (s *Service) RemoveTarget(ctx context.Context, targetID int64) error {
+	if err := s.endpoints.RemoveTarget(ctx, targetID); err != nil {
+		return fmt.Errorf("removing target id=%d: %w", targetID, err)
+	}
+	return nil
+}
+
+// ── Target credential migration (ADR-0020) ───────────────────────────────────
+
+// ErrKVUnavailable is returned by MigrateTargetToKV when the Service was
+// constructed without WithKVSetter — typically because KEYVAULT_URI was empty
+// at boot. Handlers map this to HTTP 503.
+var ErrKVUnavailable = errors.New("key vault not configured")
+
+// ErrTargetAlreadyMigrated is returned when MigrateTargetToKV is invoked
+// against a target whose credential_storage_mode is not "aes". Handlers map
+// this to HTTP 409 Conflict (the operation is idempotent in spirit but the
+// caller needs to know it was a no-op).
+var ErrTargetAlreadyMigrated = errors.New("target credential is not in aes mode")
+
+// ErrTargetHasNoCredential is returned when MigrateTargetToKV is invoked
+// against a target whose auth_type is "none" — there is nothing to move
+// to the Key Vault. Handlers map this to HTTP 400.
+var ErrTargetHasNoCredential = errors.New("target has no credential to migrate")
+
+// ErrInvalidKVSecretName is returned when the operator supplies a custom
+// kv_secret_name that does not satisfy Azure Key Vault's naming rules
+// (alphanumeric and hyphen, 1-127 chars).
+var ErrInvalidKVSecretName = errors.New("invalid kv secret name")
+
+// kvSecretNamePattern mirrors the same regexp used by cmd/migrate-targets-to-kv.
+// Kept in sync manually — both paths must reject the same set of names.
+var kvSecretNamePattern = regexp.MustCompile(`^[A-Za-z0-9-]{1,127}$`)
+
+// MigrateTargetToKV moves a target's credential from AES at-rest to Key Vault,
+// switching credential_storage_mode to "kv" or "both" and recording the secret
+// name (ADR-0020).
+//
+// Flow:
+//  1. Loads the endpoint and finds the target (refuses if it isn't already
+//     in mode "aes").
+//  2. Serializes the decrypted TargetAuth and writes it to the vault under
+//     secretName (or a generated "gateway-target-{uuid_v7}" when empty).
+//  3. Persists the new mode + kv_secret_name. When mode == "kv" the AES copy
+//     is cleared (the repository sees AuthNone and writes NULL).
+//
+// Reasoning: handler maps the sentinel errors to HTTP codes. Service does the
+// orchestration so the same logic powers both the admin UI button and the
+// (existing) CLI cmd/migrate-targets-to-kv — though the CLI currently
+// re-implements this path to stay self-contained for ops scripts.
+func (s *Service) MigrateTargetToKV(ctx context.Context, endpointID, targetID int64, mode endpoint.CredentialStorageMode, secretName string) (endpoint.Target, error) {
+	if s.kvSetter == nil {
+		return endpoint.Target{}, fmt.Errorf("migrating target id=%d: %w", targetID, ErrKVUnavailable)
+	}
+	if mode != endpoint.CredentialModeKV && mode != endpoint.CredentialModeBoth {
+		return endpoint.Target{}, fmt.Errorf(`mode %q invalid: expected %q or %q`, mode, endpoint.CredentialModeKV, endpoint.CredentialModeBoth)
+	}
+
+	ep, err := s.endpoints.Get(ctx, endpointID)
+	if err != nil {
+		return endpoint.Target{}, fmt.Errorf("loading endpoint id=%d: %w", endpointID, err)
+	}
+
+	var t endpoint.Target
+	found := false
+	for _, tt := range ep.Targets {
+		if tt.ID == targetID {
+			t = tt
+			found = true
+			break
+		}
+	}
+	if !found {
+		return endpoint.Target{}, fmt.Errorf("target id=%d in endpoint id=%d: %w", targetID, endpointID, endpoint.ErrNotFound)
+	}
+
+	currentMode := t.CredentialStorageMode
+	if currentMode == "" {
+		currentMode = endpoint.CredentialModeAES
+	}
+	if currentMode != endpoint.CredentialModeAES {
+		return endpoint.Target{}, fmt.Errorf("target id=%d in mode %q: %w", targetID, currentMode, ErrTargetAlreadyMigrated)
+	}
+	if t.Auth.Type == endpoint.AuthNone {
+		return endpoint.Target{}, fmt.Errorf("target id=%d: %w", targetID, ErrTargetHasNoCredential)
+	}
+
+	name := strings.TrimSpace(secretName)
+	if name == "" {
+		u, err := uuid.NewV7()
+		if err != nil {
+			return endpoint.Target{}, fmt.Errorf("generating UUID v7 for target id=%d: %w", targetID, err)
+		}
+		name = "gateway-target-" + u.String()
+	}
+	if !kvSecretNamePattern.MatchString(name) {
+		return endpoint.Target{}, fmt.Errorf("kv secret name %q: %w", name, ErrInvalidKVSecretName)
+	}
+
+	payload, err := json.Marshal(t.Auth)
+	if err != nil {
+		return endpoint.Target{}, fmt.Errorf("marshalling target auth for id=%d: %w", targetID, err)
+	}
+	if err := s.kvSetter.Set(ctx, name, string(payload)); err != nil {
+		return endpoint.Target{}, fmt.Errorf("writing credential to key vault for target id=%d: %w", targetID, err)
+	}
+
+	t.CredentialStorageMode = mode
+	t.KVSecretName = name
+	if mode == endpoint.CredentialModeKV {
+		// Repository sees AuthNone and persists NULL in auth_config_enc,
+		// removing the AES copy entirely.
+		t.Auth = endpoint.TargetAuth{Type: endpoint.AuthNone}
+	}
+
+	updated, err := s.endpoints.UpdateTarget(ctx, t)
+	if err != nil {
+		return endpoint.Target{}, fmt.Errorf("persisting migrated target id=%d: %w", targetID, err)
+	}
+
+	s.logger.Info("target credential migrated",
+		"event_type", "target_credential_migrated",
+		"endpoint_id", endpointID,
+		"target_id", targetID,
+		"mode_before", string(endpoint.CredentialModeAES),
+		"mode_after", string(mode),
+		"kv_secret_name", name,
+	)
+	return updated, nil
+}
+
+// ListEndpointGrants returns every proxy endpoint an application has been
+// granted access to. Used by the admin UI access matrix.
+func (s *Service) ListEndpointGrants(ctx context.Context, applicationID int64) ([]endpoint.ProxyEndpoint, error) {
+	ids, err := s.endpoints.ListGrantedEndpointIDs(ctx, applicationID)
+	if err != nil {
+		return nil, fmt.Errorf("listing endpoint grants for app id=%d: %w", applicationID, err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	// N+1 is acceptable here — admin pages are low-traffic and the grant count
+	// per application is typically < 20. If this becomes a hotspot, switch to
+	// a JOIN in a dedicated repository method.
+	out := make([]endpoint.ProxyEndpoint, 0, len(ids))
+	for _, id := range ids {
+		ep, err := s.endpoints.Get(ctx, id)
+		if err != nil {
+			return nil, fmt.Errorf("loading granted endpoint id=%d: %w", id, err)
+		}
+		out = append(out, ep)
+	}
+	return out, nil
+}
+
+// GrantAccess allows an application to call a proxy endpoint.
+//
+// Emits an info log so the operator can confirm persistence without entering
+// the database. Useful while investigating UI reports of "access does not save"
+// (the log line proving the INSERT executed pairs with the 204 the handler returns).
+func (s *Service) GrantAccess(ctx context.Context, applicationID, endpointID int64) error {
+	if err := s.endpoints.Grant(ctx, applicationID, endpointID); err != nil {
+		return fmt.Errorf("granting access app id=%d endpoint id=%d: %w", applicationID, endpointID, err)
+	}
+	s.logger.Info("endpoint access granted",
+		"application_id", applicationID,
+		"endpoint_id", endpointID,
+		"event_type", "grant_created",
+	)
+	return nil
+}
+
+// RevokeAccess removes an application's access to a proxy endpoint.
+//
+// Emits an info log on success — pair with the GrantAccess log to validate that
+// toggle operations from the admin UI hit the database (see "Acessos não salva"
+// investigation in handoff.md / docs).
+func (s *Service) RevokeAccess(ctx context.Context, applicationID, endpointID int64) error {
+	if err := s.endpoints.Revoke(ctx, applicationID, endpointID); err != nil {
+		return fmt.Errorf("revoking access app id=%d endpoint id=%d: %w", applicationID, endpointID, err)
+	}
+	s.logger.Info("endpoint access revoked",
+		"application_id", applicationID,
+		"endpoint_id", endpointID,
+		"event_type", "grant_revoked",
+	)
+	return nil
+}
+
+// ── Maintenance ───────────────────────────────────────────────────────────────
+
+// PurgeExpiredSessions deletes expired or revoked session rows. Safe to call at boot
+// and periodically (e.g., daily) to keep admin_sessions bounded (ADR-0011).
+func (s *Service) PurgeExpiredSessions(ctx context.Context) error {
+	if err := s.admins.DeleteExpiredSessions(ctx); err != nil {
+		return fmt.Errorf("purging expired sessions: %w", err)
+	}
+	return nil
+}
+
+// ── Private helpers ───────────────────────────────────────────────────────────
+
+// generateRawToken returns 32 cryptographically random bytes encoded as 64 lowercase
+// hex characters. This is both the secret portion of API keys and the opaque
+// session token (before prefixing for API keys).
+func generateRawToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		return "", fmt.Errorf("generating random token: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// hashToken returns the SHA-256 hex digest of a raw token string.
+// Used for both API key hashes and session token hashes (ADR-0009, ADR-0011).
+func hashToken(raw string) string {
+	sum := sha256.Sum256([]byte(raw))
+	return hex.EncodeToString(sum[:])
+}
+
+// deriveKeyPrefix builds the "gwk_{name}" prefix for an API key from an application name.
+// Takes up to keyPrefixMaxLen ASCII [a-z0-9] characters from the name (lowercased);
+// any byte outside that range (including Unicode letters/digits, hyphens, spaces) is skipped.
+//
+// Examples:
+//
+//	"AppDemo"        → "gwk_appdemo"
+//	"My-Service-v2"  → "gwk_myservicev"
+//	"Aplicação"      → "gwk_aplicao"      (ç/ã dropped — kept ASCII-only)
+//	"Aplicação Demo" → "gwk_aplicaodem"   (ç/ã/space dropped, truncated at 10)
+//
+// Reasoning: the prefix is transmitted inside the HTTP Authorization header on every
+// request and persisted in a UTF-8 text column. HTTP/1.1 (RFC 7230) defines header
+// field values as ISO-8859-1, which means clients may legitimately transliterate
+// UTF-8 multibyte characters to single-byte latin-1 representations. When that
+// happens, Postgres rejects the inbound parameter with SQLSTATE 22021 and the auth
+// path collapses to a generic 500 — even though the consumer presented the "correct"
+// token. Restricting the prefix to printable ASCII makes tokens portable across the
+// header-encoding ambiguity. The display name itself is unaffected and may stay
+// Unicode for the UI.
+//
+// References:
+//   - ADR-0009 — DB-backed admin plane (api_keys.key_prefix is the index)
+//   - RFC 7230 §3.2.4 — Field Value Components
+//   - SPEC.md §9.1 step 4b — prefix-based lookup contract
+func deriveKeyPrefix(name string) string {
+	var b strings.Builder
+	b.WriteString("gwk_")
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		// ASCII lowercase fold for A–Z only — Unicode case folding is intentionally
+		// skipped because we already reject every non-ASCII rune below.
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		if (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') {
+			b.WriteByte(c)
+			if b.Len() >= 4+keyPrefixMaxLen { // 4 = len("gwk_")
+				break
+			}
+		}
+	}
+	return b.String()
+}

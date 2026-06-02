@@ -273,7 +273,7 @@ import (
     "github.com/go-chi/chi/v5"
     "github.com/jackc/pgx/v5/pgxpool"
 
-    "github.com/D4nRossi/ai-gateway/internal/auth"
+    "github.com/D4nRossi/ai-gateway/apps/gateway/internal/auth"
 )
 ```
 
