@@ -592,7 +592,21 @@ LOG_LEVEL=info
 MIGRATIONS_AUTO_APPLY=true
 CERTS_DIR=/etc/api-gateway/certs
 LOG_DIR=/var/log/api-gateway
+
+# SQL Server pra admin-api .NET (gateway Go resolve via gateway.yaml ${kv:...})
+# Senha resolver pre-boot via az CLI.
+SQL_CONNECTION_STRING=Server=BRSPVPDEV003.tpb.corp;Database=AzureAI_Gateway_hom;User Id=usr_sist_AzureAI_Gateway_hom;Password=<SENHA>;Encrypt=true;TrustServerCertificate=false;Application Name=api-gateway-admin
+
+# AES key compartilhada Go + .NET (ADR-0012). MESMO valor que ${kv:DB-ENCRYPTION-KEY}
+# que o gateway resolve no boot. Resolver assim:
+#   az keyvault secret show --vault-name danieldev --name DB-ENCRYPTION-KEY -o tsv
+DATABASE_ENCRYPTION_KEY_HEX=<64-char-lowercase-hex>
 ```
+
+> ⚠️ **Crítico**: `DATABASE_ENCRYPTION_KEY_HEX` precisa ser idêntica ao valor
+> que o gateway Go usa (resolvido de `${kv:DB-ENCRYPTION-KEY}` no
+> `gateway.yaml`). Se divergirem, credentials de target cifradas pelo .NET
+> não decifram pelo Go em runtime — proxy quebra.
 
 Validar sem subir nada:
 
@@ -619,10 +633,15 @@ cd /opt/api-gateway/infra/docker
 docker compose --env-file .env build --pull
 ```
 
-Builda 3 imagens:
+Builda 3 imagens locais (nginx terminator usa imagem pull direto):
 - `api-gateway-gateway` (apps/gateway/Dockerfile, Go binary)
-- `api-gateway-console` (apps/console/Dockerfile, Vite build + nginx)
+- `api-gateway-console` (apps/console/Dockerfile, Vite build + nginx Alpine)
+- `api-gateway-admin-api` (apps/admin-api/Dockerfile, .NET 10 multi-stage)
 - nginx terminator usa imagem `nginx:1.27-alpine` direto
+
+> ⚠️ **Primeiro build do admin-api .NET demora ~3-5 min** porque baixa
+> ~150 MB de SDK + faz `dotnet restore` (NuGet). Builds incrementais
+> caem pra ~30s pelo cache de camada.
 
 ### 11.2 Subir
 
@@ -637,15 +656,22 @@ docker compose ps
 docker compose logs -f gateway      # ver bootstrap sequence
 ```
 
-Esperado dentro de 30s:
+Esperado dentro de 30-60s (admin-api .NET demora um pouco mais que Go):
 
 ```
-gateway-1  | {"level":"info","msg":"ai gateway starting",...}
-gateway-1  | {"level":"info","msg":"sqlserver connected","host":"BRSPVPDEV003.tpb.corp",...}
-gateway-1  | {"level":"info","msg":"migrations applied"...}
-gateway-1  | {"level":"info","msg":"http server listening","addr":":8080"}
-nginx-1    | nginx ready
+gateway-1    | {"level":"info","msg":"ai gateway starting",...}
+gateway-1    | {"level":"info","msg":"sqlserver connected","host":"BRSPVPDEV003.tpb.corp",...}
+gateway-1    | {"level":"info","msg":"migrations applied"...}
+gateway-1    | {"level":"info","msg":"http server listening","addr":":8080"}
+admin-api-1  | {"@t":"...","@m":"Application started","app":"admin-api",...}
+admin-api-1  | {"@t":"...","@m":"Now listening on: http://[::]:8080","app":"admin-api"}
+console-1    | nginx ready
+nginx-1      | nginx ready
 ```
+
+> O healthcheck do compose dá `start_period: 30s` pro admin-api porque .NET
+> precisa do warm-up JIT + Serilog initialization. nginx só passa pra
+> `healthy` quando admin-api passar — `depends_on: condition: service_healthy`.
 
 `Ctrl+C` pra sair dos logs (containers seguem rodando).
 
@@ -690,7 +716,7 @@ curl -sSf https://api-gateway.tpb.corp/readyz | jq .
 
 Browser em `https://api-gateway.tpb.corp/` — tela de login do admin console.
 
-### 12.4 Login admin (root)
+### 12.4 Login admin (root) — vai pelo admin-api .NET
 
 Apos migration 010, existe um usuario `root` com senha temporaria
 `Adm!nGogateway2026`. Trocar IMEDIATAMENTE no primeiro login.
@@ -699,6 +725,37 @@ Fluxo:
 1. Browser: <https://api-gateway.tpb.corp/ui/login>
 2. Logar com `root` / `Adm!nGogateway2026`
 3. Trocar senha; idealmente criar admin pessoal e desativar `root`
+
+> ⚠️ **Validação crítica da Fase 4d**: nginx routing manda
+> `/admin/v1/auth/{login,logout}` pro container **admin-api .NET**, não pro
+> gateway Go. Confirmar via 3 sinais:
+>
+> ```bash
+> # 1. Login produz log no container .NET (Serilog JSON com "app":"admin-api")
+> docker compose logs admin-api --tail 50 | grep admin_login
+>
+> # 2. NENHUM log de auth_login no gateway Go (tudo passa direto pro .NET)
+> docker compose logs gateway --tail 50 | grep -i "admin login" || echo "OK (vazio = .NET capturou)"
+>
+> # 3. Audit row registra application_name="admin-api" (não "admin-create")
+> # Conecte ao SQL Server e:
+> #   SELECT TOP 5 event_type, application_name, created_at
+> #   FROM gogateway.audit_events
+> #   WHERE event_type LIKE 'admin_%' OR event_type LIKE 'application_%'
+> #   ORDER BY created_at DESC;
+> ```
+>
+> Se algum deles vazar pro Go, é nginx config errada (provavelmente
+> `proxy_pass` apontando pro upstream errado em `infra/nginx/nginx.conf`).
+
+### 12.4.1 Demais endpoints admin ainda no Go
+
+Por enquanto **só `/auth/{login,logout}`** está no .NET. Tudo mais
+(`users`, `applications`, `endpoints`, `usage`, `audit`, `budget`,
+`dashboard/*`) continua no gateway Go até a próxima slice rolar no nginx.
+
+Se o console exibir uma página esperada (ex: lista de apps), você está vendo
+a admin Go. Isso é correto durante a transição (ADR-0027).
 
 ### 12.5 Chat completion via API
 
