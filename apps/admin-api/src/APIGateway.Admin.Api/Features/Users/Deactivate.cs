@@ -24,7 +24,7 @@ namespace APIGateway.Admin.Api.Features.Users;
 /// </remarks>
 public static class Deactivate
 {
-    public static RouteGroupBuilder MapDeactivate(this RouteGroupBuilder group)
+    public static RouteGroupBuilder MapUsersDeactivate(this RouteGroupBuilder group)
     {
         group.MapDelete("/{id:long}", HandleAsync)
             .WithName("UsersDeactivate")

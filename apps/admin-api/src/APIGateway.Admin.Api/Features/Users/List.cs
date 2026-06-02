@@ -16,7 +16,7 @@ namespace APIGateway.Admin.Api.Features.Users;
 /// </remarks>
 public static class List
 {
-    public static RouteGroupBuilder MapList(this RouteGroupBuilder group)
+    public static RouteGroupBuilder MapUsersList(this RouteGroupBuilder group)
     {
         group.MapGet("/", HandleAsync)
             .WithName("UsersList")

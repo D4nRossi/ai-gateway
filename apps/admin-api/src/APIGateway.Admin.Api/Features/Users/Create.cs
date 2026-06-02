@@ -30,7 +30,7 @@ namespace APIGateway.Admin.Api.Features.Users;
 /// </remarks>
 public static class Create
 {
-    public static RouteGroupBuilder MapCreate(this RouteGroupBuilder group)
+    public static RouteGroupBuilder MapUsersCreate(this RouteGroupBuilder group)
     {
         group.MapPost("/", HandleAsync)
             .WithName("UsersCreate")

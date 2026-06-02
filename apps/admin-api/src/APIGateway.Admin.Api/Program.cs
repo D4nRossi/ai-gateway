@@ -1,3 +1,4 @@
+using APIGateway.Admin.Api.Features.Applications;
 using APIGateway.Admin.Api.Features.Auth;
 using APIGateway.Admin.Api.Features.Users;
 using APIGateway.Admin.Api.Infrastructure.Auditing;
@@ -77,9 +78,16 @@ adminV1.MapGroup("/auth")
     .MapLogout();
 
 adminV1.MapGroup("/users")
-    .MapList()
-    .MapCreate()
-    .MapDeactivate();
+    .MapUsersList()
+    .MapUsersCreate()
+    .MapUsersDeactivate();
+
+adminV1.MapGroup("/applications")
+    .MapApplicationsList()
+    .MapApplicationsGet()
+    .MapApplicationsCreate()
+    .MapApplicationsUpdate()
+    .MapApplicationsDelete();
 
 app.Run();
 return 0;
