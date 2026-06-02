@@ -92,19 +92,64 @@ curl -N -H "Authorization: Bearer <gwk_...>" \
 
 Eventos `data:` devem chegar progressivamente.
 
-## Quando ativar a admin-api .NET
+## Rolagem slice a slice da admin-api .NET
 
-Hoje comentada (transicao Go-only). Quando todos os 27 slices estiverem
-migrados:
+Estado em 2026-06-02 (ADR-0027 Fase 4d):
 
-1. Descomentar bloco `admin-api:` em `docker-compose.yml`
-2. Editar `infra/nginx/nginx.conf`:
-   - Em `location /admin/v1/auth/login` e `/admin/v1/auth/logout` trocar
-     `proxy_pass http://gateway_upstream` por `http://admin_api_upstream`
-   - Em `location /admin/v1/` (geral) idem
-3. Remover handler admin do gateway Go (Fase 5 do plano)
-4. `docker compose up -d --build`
-5. `docker compose exec nginx nginx -s reload`
+- **27 endpoints implementados** no admin-api .NET
+- `admin-api` container **ativo** (build + start junto com os outros)
+- nginx roteia **apenas `/admin/v1/auth/{login,logout}`** pro container .NET
+- Demais paths `/admin/v1/*` continuam no gateway Go
+
+Rolagem por slice (uma de cada vez, valida em homolog antes da proxima):
+
+| Path | Container atual | Quando rolar |
+|---|---|---|
+| `/admin/v1/auth/login` | admin-api .NET ✅ | rolou hoje |
+| `/admin/v1/auth/logout` | admin-api .NET ✅ | rolou hoje |
+| `/admin/v1/users/*` | gateway Go | adicionar location no nginx + reload |
+| `/admin/v1/applications/*` | gateway Go | idem |
+| `/admin/v1/endpoints/*` | gateway Go | idem |
+| `/admin/v1/usage` | gateway Go | idem |
+| `/admin/v1/audit` | gateway Go | idem |
+| `/admin/v1/budget` | gateway Go | idem |
+| `/admin/v1/dashboard/*` | gateway Go | idem |
+
+**Procedimento padrao pra rolar uma slice:**
+
+1. Editar `infra/nginx/nginx.conf` — adicionar/mover `location /admin/v1/<slice>/`
+   apontando pra `http://admin_api_upstream`
+2. Smoke test em homolog com 1 chamada pra cada endpoint da slice
+3. Comparar response shape (curl + jq) contra a versao Go
+4. Validar audit_events: linha emitida pelo `admin-api` deve aparecer
+5. `docker compose exec nginx nginx -t && nginx -s reload` (zero downtime)
+6. Se quebrar, reverter mudanca e investigar
+
+Quando **todas** as 9 slices estiverem rolando .NET, abrir PR pra Fase 5:
+remover `apps/gateway/internal/api/admin/`, `internal/app/adminservice/`,
+`cmd/admin-create/` do gateway Go.
+
+## Migrations: ownership compartilhado durante a transicao
+
+Hoje:
+
+- **Gateway Go** roda golang-migrate no boot (`MIGRATIONS_AUTO_APPLY=true`)
+  contra `gogateway.schema_migrations`
+- **Admin-api .NET** roda DbUp via CLI separado (preserva ADR-0025) contra
+  `gogateway.SchemaVersions`. Nao roda no boot do Kestrel
+
+Os dois bookkeepings sao independentes. Migrations `.up.sql` sao idempotentes
+(`IF OBJECT_ID IS NULL`/`IF NOT EXISTS`), entao rodar ambos contra o mesmo
+schema nao quebra — primeiro a rodar aplica, segundo descobre que ja existe.
+
+Pra aplicar migrations via .NET manualmente:
+
+```bash
+docker compose run --rm admin-api dotnet APIGateway.Admin.Api.dll migrate up
+```
+
+Quando Fase 5 desligar o gateway Go admin, a .NET passa a ser **dona unica**
+do schema.
 
 ## Manutencao
 

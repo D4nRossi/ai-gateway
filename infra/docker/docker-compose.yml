@@ -64,6 +64,8 @@ services:
         condition: service_healthy
       console:
         condition: service_healthy
+      admin-api:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/__nginx_healthz"]
       interval: 30s
@@ -128,30 +130,35 @@ services:
   # ─────────────────────────────────────────────────────────────────────────
   # admin-api — .NET 10 admin plane (ADR-0027)
   #
-  # ⚠️ COMENTADO durante a transicao. So tem 2 dos 27 endpoints (Auth) —
-  # frontend ainda chama os outros 25 no gateway Go. Quando Fase 3.x cobrir
-  # todos os slices, descomentar e atualizar nginx routing pra apontar
-  # /admin/v1/* pra admin_api_upstream.
+  # Os 27 endpoints estao implementados. Migration ownership ainda eh
+  # compartilhado: gateway Go aplica via golang-migrate; admin-api .NET nao
+  # roda DbUp no boot (preserva ADR-0025), mas o CLI esta disponivel:
+  #   docker compose run --rm admin-api migrate up
+  #
+  # Rolagem nginx: hoje so /admin/v1/auth/{login,logout} aponta pra ca.
+  # Resto continua no gateway Go ate Fase 5 desligar o admin Go.
   # ─────────────────────────────────────────────────────────────────────────
-  # admin-api:
-  #   build:
-  #     context: ../../apps/admin-api
-  #     dockerfile: Dockerfile
-  #   restart: unless-stopped
-  #   expose:
-  #     - "8080"
-  #   environment:
-  #     ASPNETCORE_ENVIRONMENT:     ${DOTNET_ENVIRONMENT:-Production}
-  #     ConnectionStrings__Gateway: ${SQL_CONNECTION_STRING}
-  #     KeyVault__Uri:              ${KEYVAULT_URI}
-  #     AZURE_CLIENT_ID:            ${AZURE_CLIENT_ID:-}
-  #     AZURE_TENANT_ID:            ${AZURE_TENANT_ID:-}
-  #     AZURE_CLIENT_SECRET:        ${AZURE_CLIENT_SECRET:-}
-  #   healthcheck:
-  #     test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
-  #     interval: 30s
-  #     timeout: 5s
-  #     retries: 3
-  #     start_period: 30s
-  #   deploy:
-  #     replicas: 2
+  admin-api:
+    build:
+      context: ../../apps/admin-api
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      ASPNETCORE_ENVIRONMENT:        ${DOTNET_ENVIRONMENT:-Production}
+      ConnectionStrings__Gateway:    ${SQL_CONNECTION_STRING}
+      Database__EncryptionKeyHex:    ${DATABASE_ENCRYPTION_KEY_HEX}
+      KeyVault__Uri:                 ${KEYVAULT_URI}
+      Audit__ApplicationName:        admin-api
+      # Azure auth: Managed Identity (VM Azure) ou Service Principal (host
+      # on-prem). Vars vazias = DefaultAzureCredential tenta a cadeia padrao.
+      AZURE_CLIENT_ID:               ${AZURE_CLIENT_ID:-}
+      AZURE_TENANT_ID:               ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_SECRET:           ${AZURE_CLIENT_SECRET:-}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
