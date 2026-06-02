@@ -2,6 +2,7 @@ using APIGateway.Admin.Api.Features.Applications;
 using APIGateway.Admin.Api.Features.Auth;
 using APIGateway.Admin.Api.Features.Endpoints;
 using APIGateway.Admin.Api.Features.Endpoints.Targets;
+using APIGateway.Admin.Api.Features.Observability;
 using APIGateway.Admin.Api.Features.Users;
 using APIGateway.Admin.Api.Infrastructure.Auditing;
 using APIGateway.Admin.Api.Infrastructure.Crypto;
@@ -127,6 +128,12 @@ adminV1.MapGroup("/endpoints")
     .MapEndpointsUpdateTarget()
     .MapEndpointsRemoveTarget()
     .MapEndpointsMigrateTargetToKV();
+
+// Observability (read-only): routes ficam direto em /admin/v1/{usage,audit,budget}
+// sem subgroup pra paridade com paths Go.
+adminV1.MapObservabilityUsage()
+       .MapObservabilityAudit()
+       .MapObservabilityBudget();
 
 app.Run();
 return 0;
