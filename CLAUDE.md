@@ -182,12 +182,51 @@ Para **toda** tarefa de implementação (novo bloco, correção, refatoração),
 - `time`
 - `sync`
 
-### 4.4 Imagens Docker
-- `golang:1.24-alpine` (build stage)
-- `alpine:3.21` (runtime stage)
+### 4.4 .NET (admin plane — ADR-0027)
+
+A partir de 2026-06-02 o produto passa a ter um segundo quantum lógico em
+.NET 10 (admin plane). Stack autorizada — qualquer outra requer ADR:
+
+| Pacote | Versão | Propósito | URL oficial |
+|---|---|---|---|
+| .NET SDK | 10.0.x | Runtime/framework | https://dotnet.microsoft.com/en-us/download/dotnet/10.0 |
+| `Dapper` | 2.x latest | Micro-ORM (SQL direto, sem abstrações) — ADR-0027 | https://github.com/DapperLib/Dapper |
+| `Microsoft.Data.SqlClient` | latest stable | SQL Server driver | https://learn.microsoft.com/en-us/sql/connect/ado-net/microsoft-ado-net-sql-server |
+| `dbup-sqlserver` | latest stable | Migrations T-SQL via scripts embedded — ADR-0027 | https://dbup.readthedocs.io/ |
+| `BCrypt.Net-Next` | 4.x | bcrypt cost=12 (paridade ADR-0011) | https://github.com/BcryptNet/bcrypt.net |
+| `Serilog.AspNetCore` + `Serilog.Sinks.Console` | latest stable | Structured JSON logging | https://github.com/serilog/serilog-aspnetcore |
+| `Azure.Identity` | latest stable | Azure auth (`DefaultAzureCredential`) | https://learn.microsoft.com/en-us/dotnet/azure/sdk/authentication |
+| `Azure.Security.KeyVault.Secrets` | latest stable | Necessário pra `MigrateTargetToKV` | https://learn.microsoft.com/en-us/dotnet/api/azure.security.keyvault.secrets |
+| `Microsoft.AspNetCore.OpenApi` + `Swashbuckle.AspNetCore` | latest stable | Gera `contracts/admin-api.openapi.yaml` | https://learn.microsoft.com/en-us/aspnet/core/fundamentals/openapi |
+| `Microsoft.Extensions.Diagnostics.HealthChecks` | inbox | `/healthz`, `/readyz` | https://learn.microsoft.com/en-us/aspnet/core/host-and-deploy/health-checks |
+| (tests) `xUnit` | latest stable | Test framework | https://xunit.net/ |
+| (tests) `Testcontainers.MsSql` | latest stable | Integration tests com SQL Server real | https://dotnet.testcontainers.org/modules/mssql/ |
+| (tests) `FluentAssertions` | latest stable | Assertions legíveis | https://fluentassertions.com/ |
+
+**Convenções .NET fixadas pela ADR-0027:**
+- **Minimal API** (não Controllers)
+- **Vertical Slice** — uma feature por pasta em `Features/<Domain>/<Action>.cs`
+- `Directory.Build.props` fixa `TargetFramework`, `Nullable=enable`, `TreatWarningsAsErrors=true`, versões NuGet
+- Sem EF Core, sem AutoMapper, sem MediatR — Dapper + SQL direto + Minimal API
+- Serilog → JSON stdout (paralelo ao `slog` do Go)
+
+### 4.5 Imagens Docker (Linux production — ADR-0030)
+
+Deploy alvo a partir de 2026-06-02: **Linux + Docker Compose**, reverse proxy nginx.
+
+- `golang:1.24-alpine` — build stage do gateway Go
+- `alpine:3.21` — runtime stage do gateway Go
+- `mcr.microsoft.com/dotnet/sdk:10.0` — build stage da admin-api .NET
+- `mcr.microsoft.com/dotnet/aspnet:10.0` — runtime stage da admin-api .NET
+- `node:20-alpine` — build stage do console React+Vite
+- `nginx:1.27-alpine` — runtime do console (servindo `dist/`) + reverse proxy/TLS terminator
 - Banco de dados: SQL Server corporativo (`BRSPVPDEV003` em homologação) — não roda em container local; ADR-0022 documenta a decisão e fallback eventual via `mcr.microsoft.com/mssql/server` se dev offline for necessário no futuro
 
-### 4.5 Bibliotecas explicitamente **proibidas**
+**Deploy Windows (IIS + WinSW) está suspenso** — ADR-0026 fica como referência histórica pra hardening de secrets via DPAPI+AE caso o caminho retorne.
+
+### 4.6 Bibliotecas explicitamente **proibidas**
+
+**Go:**
 - `github.com/sirupsen/logrus`, `go.uber.org/zap` (usar `slog`)
 - `github.com/gorilla/mux` (usar `chi`)
 - `github.com/jmoiron/sqlx` (usar `database/sql` + driver direto, sem wrapper)
@@ -195,6 +234,14 @@ Para **toda** tarefa de implementação (novo bloco, correção, refatoração),
 - `github.com/joho/godotenv` (carregar `.env` via Docker Compose ou shell)
 - Qualquer ORM (GORM, Ent, etc.) — querys SQL diretas com `database/sql`
 - Qualquer biblioteca não listada em 4.2 sem ADR aprovado
+
+**.NET:**
+- `Microsoft.EntityFrameworkCore` e variantes — owner rejeitou em 2026-06-02 (ADR-0027); usar Dapper + Microsoft.Data.SqlClient
+- `AutoMapper`, `MediatR` — Vertical Slice dispensa; mapping manual via record-with statements; handlers diretos sem mediator
+- `Newtonsoft.Json` — usar `System.Text.Json` (inbox; performance e zero deps)
+- `Microsoft.AspNetCore.Mvc.NewtonsoftJson` — idem
+- Logging legacy (`log4net`, `NLog`) — Serilog é o oficial
+- Qualquer pacote NuGet não listado em 4.4 sem ADR aprovado
 
 ---
 
