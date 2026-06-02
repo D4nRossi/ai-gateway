@@ -1,0 +1,157 @@
+# Compose multi-app do API Gateway (ADR-0030).
+#
+# Servicos:
+#   - nginx     : TLS terminator + routing 3-vias (infra/nginx/nginx.conf)
+#   - gateway   : Go data plane (apps/gateway/Dockerfile)
+#   - console   : React+Vite SPA estatica via nginx interno (apps/console/Dockerfile)
+#   - admin-api : .NET 10 admin plane (apps/admin-api/Dockerfile) — COMENTADO
+#                 durante a transicao Go-only. Descomentar quando Fase 3
+#                 estiver com todos os 27 slices migrados.
+#
+# SQL Server eh externo (BRSPVPDEV003.tpb.corp) — nao roda em container
+# conforme ADR-0022. Container "admin-api" assume conectividade VPN.
+#
+# Subir:
+#   cd infra/docker
+#   cp .env.example .env
+#   nano .env                # preencher segredos
+#   docker compose up -d --build
+#
+# Logs:
+#   docker compose logs -f gateway
+#   docker compose logs -f nginx
+#
+# Status:
+#   docker compose ps
+#   docker compose exec nginx nginx -t
+#
+# Migrations (modo Go atual; .NET sera CLI separada ADR-0025):
+#   Gateway Go aplica automatico no boot (MIGRATIONS_AUTO_APPLY default true).
+#   Pra desabilitar, setar MIGRATIONS_AUTO_APPLY=false e rodar:
+#     docker compose exec gateway ./ai-gateway -- migrate
+#
+# References:
+#   - ADR-0022 — SQL Server corporativo
+#   - ADR-0025 — MIGRATIONS_AUTO_APPLY toggle
+#   - ADR-0027 — admin .NET (rolagem futura)
+#   - ADR-0030 — monorepo apps/
+#   - infra/nginx/nginx.conf
+#   - docs/deploy/oracle-linux.md
+
+name: api-gateway
+
+services:
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # nginx — TLS terminator + routing
+  # ─────────────────────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      # Config + includes
+      - ../../infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../../infra/nginx/conf.d:/etc/nginx/conf.d:ro
+      # Certs vem do host (CA corp). Em prod, /etc/api-gateway/certs.
+      - ${CERTS_DIR:-../../infra/nginx/certs}:/etc/nginx/certs:ro
+      # Logs estruturados — bind no host pra agregacao via filebeat/fluent-bit.
+      - ${LOG_DIR:-./logs/nginx}:/var/log/nginx
+    depends_on:
+      gateway:
+        condition: service_healthy
+      console:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/__nginx_healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # gateway — Go data plane (admin ainda incluido nesta versao de transicao)
+  # ─────────────────────────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: ../../apps/gateway
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "8080"
+    environment:
+      CONFIG_PATH:                ${CONFIG_PATH:-/app/configs/gateway.yaml}
+      KEYVAULT_URI:               ${KEYVAULT_URI}
+      AZURE_OPENAI_ENDPOINT:      ${AZURE_OPENAI_ENDPOINT}
+      AZURE_LANGUAGE_ENDPOINT:    ${AZURE_LANGUAGE_ENDPOINT:-}
+      PROVIDER:                   ${PROVIDER:-azure}
+      LOG_LEVEL:                  ${LOG_LEVEL:-info}
+      MIGRATIONS_AUTO_APPLY:      ${MIGRATIONS_AUTO_APPLY:-true}
+      # Azure auth via Managed Identity (recommended) — se rodar em VM Azure.
+      # Em host nao-Azure usar AZURE_CLIENT_ID + AZURE_TENANT_ID + AZURE_CLIENT_SECRET
+      # via service principal (NUNCA commitar; vem do .env do host).
+      AZURE_CLIENT_ID:            ${AZURE_CLIENT_ID:-}
+      AZURE_TENANT_ID:            ${AZURE_TENANT_ID:-}
+      AZURE_CLIENT_SECRET:        ${AZURE_CLIENT_SECRET:-}
+    volumes:
+      # Override do gateway.yaml local pra customizacao por ambiente.
+      # Default monta o que ja esta na imagem; mounting host file faz override.
+      - ${GATEWAY_CONFIG_PATH:-../../apps/gateway/configs/gateway.yaml}:/app/configs/gateway.yaml:ro
+      # Logs estruturados slog JSON.
+      - ${LOG_DIR:-./logs/gateway}:/app/logs
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # console — React+Vite SPA standalone (ADR-0028)
+  # ─────────────────────────────────────────────────────────────────────────
+  console:
+    build:
+      context: ../../apps/console
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # admin-api — .NET 10 admin plane (ADR-0027)
+  #
+  # ⚠️ COMENTADO durante a transicao. So tem 2 dos 27 endpoints (Auth) —
+  # frontend ainda chama os outros 25 no gateway Go. Quando Fase 3.x cobrir
+  # todos os slices, descomentar e atualizar nginx routing pra apontar
+  # /admin/v1/* pra admin_api_upstream.
+  # ─────────────────────────────────────────────────────────────────────────
+  # admin-api:
+  #   build:
+  #     context: ../../apps/admin-api
+  #     dockerfile: Dockerfile
+  #   restart: unless-stopped
+  #   expose:
+  #     - "8080"
+  #   environment:
+  #     ASPNETCORE_ENVIRONMENT:     ${DOTNET_ENVIRONMENT:-Production}
+  #     ConnectionStrings__Gateway: ${SQL_CONNECTION_STRING}
+  #     KeyVault__Uri:              ${KEYVAULT_URI}
+  #     AZURE_CLIENT_ID:            ${AZURE_CLIENT_ID:-}
+  #     AZURE_TENANT_ID:            ${AZURE_TENANT_ID:-}
+  #     AZURE_CLIENT_SECRET:        ${AZURE_CLIENT_SECRET:-}
+  #   healthcheck:
+  #     test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:8080/healthz"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 3
+  #     start_period: 30s
+  #   deploy:
+  #     replicas: 2
