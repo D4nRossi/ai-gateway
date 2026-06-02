@@ -87,7 +87,11 @@ adminV1.MapGroup("/applications")
     .MapApplicationsGet()
     .MapApplicationsCreate()
     .MapApplicationsUpdate()
-    .MapApplicationsDelete();
+    .MapApplicationsDelete()
+    .MapApplicationsRotateKey()
+    .MapApplicationsListGrants()
+    .MapApplicationsGrant()
+    .MapApplicationsRevoke();
 
 app.Run();
 return 0;
