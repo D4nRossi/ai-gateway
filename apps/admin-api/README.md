@@ -107,6 +107,22 @@ ConnectionStrings__Gateway='Server=...;Database=AzureAI_Gateway_hom;...' \
 dotnet run --project src/APIGateway.Admin.Api -- migrate status
 ```
 
+### ⚠️ Primeira execução de `migrate up` durante a transição
+
+Durante a transição (gateway Go ainda no ar com `MIGRATIONS_AUTO_APPLY=true`),
+o DbUp do admin-api **sempre vai dizer "applied 12 scripts"** na primeira
+execução — não é bug:
+
+- Gateway Go aplica via `golang-migrate` e marca em `gogateway.schema_migrations`
+- admin-api .NET aplica via DbUp e marca em `gogateway.SchemaVersions`
+- **Os dois bookkeepings são independentes** — a primeira execução do .NET
+  não vê que o Go já aplicou tudo, então tenta tudo de novo
+- As 12 migrations são **idempotentes** (`IF OBJECT_ID IS NULL`,
+  `IF NOT EXISTS`, `IF COL_LENGTH IS NULL`) — os SQLs rodam mas viram noop
+
+Resultado esperado no log: 12 scripts "applied" + zero impacto no schema.
+Quando Fase 5 desligar o admin Go, o admin-api .NET vira dono único.
+
 ## Container
 
 ```bash
