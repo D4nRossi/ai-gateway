@@ -128,6 +128,16 @@ Se você está usando os IDEs JetBrains, esse é o caminho mais limpo: o `.env` 
 4. Para o modo mock, adicione `PROVIDER=mock` ao Environment.
 5. Salve e dê **Run**.
 
+> **A partir de 2026-06-02 (ADR-0028):** o gateway Go **não serve mais o frontend** (`go:embed` removido). Pra rodar a UI em dev local, suba o console em paralelo a partir de `apps/console/`:
+>
+> ```
+> cd apps/console
+> npm install      # se não rodou ainda
+> npm run dev      # Vite dev server em http://localhost:5173/ui/
+> ```
+>
+> O proxy do Vite continua mandando `/admin/v1/*`, `/v1/*`, `/healthz`, `/readyz` pra `http://localhost:8080` (o gateway que você acabou de subir no GoLand). Acesse a UI em `http://localhost:5173/ui/`.
+
 ### 3.2 GoLand — admin-create
 
 > **Nota (ADR-0022 / migration 010):** ambientes novos **não precisam** mais

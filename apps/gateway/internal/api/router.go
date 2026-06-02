@@ -52,9 +52,6 @@ type RouterDeps struct {
 	// ProxyHandler is the generic-proxy http.Handler mounted under /v1/proxy.
 	// Constructed in main.go from the proxy package.
 	ProxyHandler http.Handler
-	// WebHandler serves the embedded admin SPA. Mounted at /ui.
-	// Constructed in main.go from the web package (ADR-0014).
-	WebHandler http.Handler
 }
 
 // NewRouter builds and returns the fully assembled chi router.
@@ -106,19 +103,10 @@ func NewRouter(deps RouterDeps) *chi.Mux {
 		})
 	}
 
-	// ── Admin SPA ─────────────────────────────────────────────────────────────
-	// chi.Mount only updates the RouteContext — it does NOT strip the prefix
-	// from r.URL.Path. http.StripPrefix is required so the embedded file server
-	// sees paths relative to the dist root ("/assets/foo.css") instead of the
-	// full URL ("/ui/assets/foo.css") which would 404 and fall through to
-	// index.html, breaking CSS/JS MIME types in the browser (ADR-0014).
-	// Visiting / redirects to /ui/ so the landing page is the admin console.
-	if deps.WebHandler != nil {
-		r.Mount("/ui", http.StripPrefix("/ui", deps.WebHandler))
-		r.Get("/", func(w http.ResponseWriter, req *http.Request) {
-			http.Redirect(w, req, "/ui/", http.StatusFound)
-		})
-	}
+	// Admin SPA is no longer served by the Go binary (ADR-0028 supersedes ADR-0014).
+	// The console is a standalone app at apps/console/ served by an nginx
+	// container; the nginx terminator routes /ui/* to it and /admin/v1/*, /v1/*
+	// to this binary.
 
 	return r
 }

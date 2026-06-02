@@ -1,6 +1,6 @@
 # ADR-0014: Frontend stack — React + Vite + shadcn/ui embedded in Go binary
 
-- **Status**: accepted
+- **Status**: superseded by [ADR-0028](0028-frontend-extraido-do-binario.md) em 2026-06-02 — frontend deixou de ser embedado quando o monorepo separou `apps/console/` como app standalone. Embed via `go:embed` foi removido; SPA passa a ser servido por nginx no container `apps/console/`.
 - **Date**: 2026-05-20
 - **Decision makers**: Danirek (Software Architect, Digital Innovation — Teleperformance Brasil)
 
