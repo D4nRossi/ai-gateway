@@ -93,7 +93,7 @@ Commits no `main` / `v2` (push confirmado pelo owner):
   4xx/5xx, latência avg+max, custo BRL área, top apps barra, tier pie)
 - **Manuais de deploy**: `docs/deploy/linux.md` + `docs/deploy/windows.md`
 - **Postman collection** em `docs/postman/`
-- **Script de build Windows** na raiz (`build-windows-deploy.sh`)
+- **Script de build Windows** em `infra/legacy-windows/build-windows-deploy.sh` (deprecado em 2026-06-02 junto com a virada Linux+Docker; ver README dessa pasta)
 - **Notas vault Obsidian** em `KB/AI-Gateway/Deploy/` (3 notas:
   `_MOC`, `Linux-NGINX-Docker`, `Windows-IIS-WinSW`). 3 ADRs novas
   (0024/0025/0026) ainda **não foram pra vault** porque o MCP caiu.
