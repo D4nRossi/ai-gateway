@@ -2,9 +2,13 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 # APIGateway.Admin — admin plane do API Gateway (ADR-0027).
-# Solution gerencia o projeto Minimal API + .NET 10 + Dapper + DbUp.
-# Tests ficarão em apps/admin-api/tests/ em PR subsequente.
+# Solution gerencia: src/APIGateway.Admin.Api (Minimal API + Dapper + DbUp)
+# + tests/APIGateway.Admin.UnitTests + tests/APIGateway.Admin.IntegrationTests.
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "APIGateway.Admin.Api", "src\APIGateway.Admin.Api\APIGateway.Admin.Api.csproj", "{1A2B3C4D-5E6F-7890-ABCD-EF1234567890}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "APIGateway.Admin.UnitTests", "tests\APIGateway.Admin.UnitTests\APIGateway.Admin.UnitTests.csproj", "{2B3C4D5E-6F78-90AB-CDEF-234567890ABC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "APIGateway.Admin.IntegrationTests", "tests\APIGateway.Admin.IntegrationTests\APIGateway.Admin.IntegrationTests.csproj", "{3C4D5E6F-7890-ABCD-EF12-34567890ABCD}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -16,5 +20,13 @@ Global
 		{1A2B3C4D-5E6F-7890-ABCD-EF1234567890}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{1A2B3C4D-5E6F-7890-ABCD-EF1234567890}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{1A2B3C4D-5E6F-7890-ABCD-EF1234567890}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2B3C4D5E-6F78-90AB-CDEF-234567890ABC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2B3C4D5E-6F78-90AB-CDEF-234567890ABC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2B3C4D5E-6F78-90AB-CDEF-234567890ABC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2B3C4D5E-6F78-90AB-CDEF-234567890ABC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3C4D5E6F-7890-ABCD-EF12-34567890ABCD}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3C4D5E6F-7890-ABCD-EF12-34567890ABCD}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3C4D5E6F-7890-ABCD-EF12-34567890ABCD}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3C4D5E6F-7890-ABCD-EF12-34567890ABCD}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
