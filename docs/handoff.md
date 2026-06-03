@@ -26,203 +26,206 @@ para persistência entre máquinas.
 
 ## 1. Estado em que paramos
 
-**Data:** pausa em 2026-05-29 (durante deploy Windows). Status:
-**deploy Windows do gateway está em progresso, travado na fase de ACLs**
-(`E:\AIGateway` ficou com Owner sem permissão de Read após `icacls /deny`).
-Owner pediu pausa pra retomar depois.
+**Data:** fim do dia 2026-06-02 (sessão Ubuntu → trocando pra Windows).
+Status: **admin .NET 100% implementada, infra deploy Linux+Docker pronta,
+script de automação gerado. Deploy real ainda não executado** — owner vai
+simular em VM Oracle Linux dev usando Claude Code lá.
 
-**Detalhe operacional importante:** o MCP do Obsidian caiu durante a sessão
-e não voltou. Vault não foi atualizado com o material novo. Quando o MCP
-voltar, espelhar o conteúdo das seções abaixo + `docs/adrs/0024-0026` no
-vault.
+> **Deploy Windows está SUSPENSO** desde 2026-06-02 (ADR-0030 pivot pra
+> Linux+Docker). Material legado preservado em
+> `infra/legacy-windows/` + `docs/deploy/windows.md` (referência histórica).
 
-### Onde estamos no deploy Windows
+### O que está pronto pra deploy
 
-| Etapa | Status |
+| Componente | Status |
 |---|---|
-| Build do pacote `.zip` na Ubuntu workstation | ✅ feito (`ai-gateway-deploy-69ed91f.zip`) |
-| Transporte pro servidor + extração em `E:\AIGateway\` | ✅ feito (`bin/`, `configs/`, `migrations/`, `SHA256SUMS`) |
-| Pasta `logs/` no servidor | ❌ falta criar |
-| ACL inicial — script `/deny "Users:(W)"` quebrou | 🔥 **travado** — Administrator perdeu Read na pasta |
-| Cifrar `gateway.env` via DPAPI | ⏳ pendente (PowerShell pronto, falta executar) |
-| Migrations manuais (`migrate up`) | ⏳ pendente |
-| Instalar WinSW como serviço | ⏳ pendente |
-| Configurar IIS (URL Rewrite + ARR + cert TLS) | ⏳ pendente |
-| Smoke test (`/healthz`, login admin, chat) | ⏳ pendente |
+| Monorepo `apps/{gateway,admin-api,console}` + `infra/{docker,nginx,scripts}` | ✅ |
+| Gateway Go (data plane + admin Go ainda no ar transicional) | ✅ |
+| admin-api .NET 10 — 27/27 endpoints com paridade Go | ✅ |
+| AES-256-GCM cipher (ADR-0012) paridade bit-a-bit | ✅ + UnitTests |
+| Tests scaffold (xUnit + Testcontainers Auth piloto) | ✅ scaffold |
+| Console standalone (sem `go:embed`) | ✅ |
+| nginx terminator + routing 3-vias | ✅ |
+| `/admin/v1/auth/{login,logout}` rolado pra .NET no nginx | ✅ |
+| Demais `/admin/v1/*` continuam Go até Fase 5 | ⏳ |
+| Compose multi-app com healthchecks + depends_on | ✅ |
+| Guia `docs/deploy/oracle-linux.md` (~700 linhas) | ✅ |
+| Script `infra/scripts/deploy-oracle-linux.sh` idempotente 14 fases | ✅ |
+| Pre-deploy review (8 P1/P2 fixados + 3 micro-fixes) | ✅ |
+| Vault Obsidian sincronizado (2 sessões 2026-06-02 + memória) | ✅ |
 
-### Decisões consolidadas pra esse deploy
+### O que está pendente
+
+| Item | Bloqueador | Resolução |
+|---|---|---|
+| **Deploy real em VM Oracle Linux** | owner não rodou ainda | simular em VM dev → ajustar script → rodar em homolog/prod |
+| Validação runtime do build .NET | NuGet timeout local (offline) | rodar `dotnet restore` em máquina com internet (Rider/VS no Windows) |
+| Tests E2E pras 8 slices que não são Auth | padrão estabelecido em `AuthTests.cs` | replicar quando precisar |
+| Rolar próximas slices no nginx routing | precisa primeiro validar Auth em homolog | um PR por slice quando deploy estabilizar |
+| Fase 5 (desligar admin Go) | precisa todas 9 slices no .NET routing | meta longa |
+
+### Tech debt pré-existente aceito (NÃO corrigido)
+
+- README.md root + CLAUDE.md mencionam Postgres em ~6 lugares (pré-ADR-0022). Owner aceita
+- `contracts/admin-api.openapi.yaml` não gerado (ADR-0030 prometeu) — owner gera via Rider depois
+- Session expired cleanup no admin-api .NET (background service) — postergado
+- ADRs 0011/0012 etc. não revisitadas após mudanças relacionadas
+
+### Decisões consolidadas pra deploy Linux+Docker (alvo atual ADR-0030)
 
 | Item | Valor |
 |---|---|
-| Path raiz no servidor | `E:\AIGateway\` (disco E:) |
-| Service account | `sv_autoccms` (não-gMSA — senha vai no WinSW XML, opção B) |
-| Senha no XML | aceitar com ACL apertada; preferível gMSA no futuro |
-| `SECRET_PROVIDER` | `db` (sem Azure KV) |
-| `DPAPI_ENV_FILE` | `E:\AIGateway\configs\gateway.env.dpapi` |
-| `MIGRATIONS_AUTO_APPLY` | `false` (DBA roda manual) |
-| Azure Language no yaml V1 | comentado (Tier 2/3 PII só por regex local) |
-| Azure OpenAI no yaml V1 | removido (endpoints cadastrados via Console / proxy plane) |
-| SQL Server inicial | `BRSPVPDEV003.tpb.corp` (mesmo de homolog) |
+| Alvo OS | Oracle Linux 9 (RHEL 9 compatible) |
+| Container runtime | Docker CE 27+ via repo CentOS |
+| Reverse proxy/TLS | nginx 1.27-alpine (terminator + routing 3-vias) |
+| Path raiz no servidor | `/opt/api-gateway` |
+| Config path | `/etc/api-gateway/` (`.env`, `certs/`) |
+| Log path | `/var/log/api-gateway/{nginx,gateway}` |
+| User operacional | `gateway-ops` (membro grupo docker) |
+| SELinux | enforcing; `container_file_t` em bind mounts |
+| SQL Server | `BRSPVPDEV003.tpb.corp:1433` (corp, externo) |
 | Database | `AzureAI_Gateway_hom` |
-| SQL user | `usr_sist_AzureAI_Gateway_hom` |
+| SQL user | `usr_sist_AzureAI_Gateway_hom` (senha via KV) |
+| Azure KV | `danieldev` (`AzureAIGateway-DB-Password-hom`, `DB-ENCRYPTION-KEY`, `AZURE-OPENAI-API-KEY`) |
 | `DB_ENCRYPTION_KEY_HEX` (gerado) | `4b3d200ab31e8ede05af67a70632db4e02c01630eac9d1d2e5f51935117bbea1` |
 
-⚠️ **A chave AES é viva.** Quem tiver acesso a esse arquivo + ao
-`gateway.env.dpapi` consegue derivar todos os secrets. Tratar como dado
-sensível conforme classificação corp.
+⚠️ **A chave AES é viva.** Mesmo valor que o admin-api .NET lê de
+`Database__EncryptionKeyHex`. Divergência → credentials cifradas por um lado
+não decifram pelo outro. Tratar como dado sensível conforme classificação corp.
 
-### O que foi entregue nessa sessão (e pushado)
+### O que foi entregue nesta megasessão 2026-06-02 (pushado em commits ordenados)
 
-Commits no `main` / `v2` (push confirmado pelo owner):
+**Parte 1 (manhã)** — reorg + ADRs + esqueleto:
 
-- **Onda 4.5** — Target credentials no Key Vault (ADR-0020 `accepted`)
-- **ADR-0024** — Usage tracking no proxy plane (Playground agora aparece em
-  `usage_events` + dashboards)
-- **ADR-0025** — `MIGRATIONS_AUTO_APPLY` toggle (default `true`; `false` em
-  prod pra DBA controlar janela)
-- **ADR-0026 V1** — Secrets Windows sem KV (DPAPI cobre boot; `gogateway.secrets`
-  + Always Encrypted cobre runtime). Componentes:
-  - `internal/infra/dpapi/` (Windows-only via build tags; stub em Linux/macOS)
-  - `internal/infra/secretsdb/` (drop-in pra `keyvault.SecretGetter` + `SecretSetter`)
-  - `migrations/012_gogateway_secrets.up.sql` (tabela base; AE manual via PowerShell)
-  - `cmd/secrets/` (CLI 5 subcomandos)
-  - `cmd/gateway/main.go`: env `SECRET_PROVIDER=kv|db` decide backend
-- **Fase A polish** Dashboard + Observability (bugs, skeletons, validações,
-  tooltips, refresh, ordenação top spenders)
-- **Fase B** Dashboard com 5 charts via recharts (timeseries requests +
-  4xx/5xx, latência avg+max, custo BRL área, top apps barra, tier pie)
-- **Manuais de deploy**: `docs/deploy/linux.md` + `docs/deploy/windows.md`
-- **Postman collection** em `docs/postman/`
-- **Script de build Windows** em `infra/legacy-windows/build-windows-deploy.sh` (deprecado em 2026-06-02 junto com a virada Linux+Docker; ver README dessa pasta)
-- **Notas vault Obsidian** em `KB/AI-Gateway/Deploy/` (3 notas:
-  `_MOC`, `Linux-NGINX-Docker`, `Windows-IIS-WinSW`). 3 ADRs novas
-  (0024/0025/0026) ainda **não foram pra vault** porque o MCP caiu.
+- ADRs 0027-0030 escritas (`docs/adrs/`)
+- Reorg pra monorepo `apps/{gateway,admin-api,console}` + `infra/`
+- Console standalone (`go:embed` removido — ADR-0028)
+- `internal/` consolidado por domínio Variante C (`governance/`, `chat/`, `proxy/`)
+- Esqueleto admin-api .NET 10 + Auth piloto
+- Compose multi-app + nginx config inicial
+- Guia `docs/deploy/oracle-linux.md` (~700 linhas)
+- Deploy Windows formalmente suspenso
 
-### Como retomar (próxima sessão)
+**Parte 2 (tarde)** — completar + ativar:
 
-Owner abre o Claude Code e diz "vamos continuar o deploy Windows":
+- Slices Users, Applications CRUD, RotateKey+Grants, Endpoints CRUD,
+  Targets+MigrateToKV, Observability, Dashboard — **27/27 endpoints**
+- AES-GCM cipher paridade ADR-0012 (`Infrastructure/Crypto/AesGcmCipher.cs`)
+- `TargetAuthPlaintext` + custom converter (paridade Go json.Marshal)
+- `IKeyVaultSecretWriter` + impl condicional (`DefaultAzureCredential`)
+- Tests scaffold: `tests/APIGateway.Admin.UnitTests/` (FluentAssertions)
+  + `tests/APIGateway.Admin.IntegrationTests/` (Testcontainers + 6 tests E2E Auth)
+- Solution `APIGateway.Admin.sln` com 3 projetos
+- **Fase 4d**: admin-api .NET **ativada no compose**; nginx rola
+  `/admin/v1/auth/{login,logout}` pra `admin_api_upstream`
+- Pre-deploy review: 5 problemas P1/P2 fixados (wget Dockerfile,
+  compose headers stale, comentários migrations errados, README admin-api)
+- 3 micro-fixes: connection string retry, escape de senha, nota explicativa
+  `migrate up` primeira execução
+- **Script `infra/scripts/deploy-oracle-linux.sh`** idempotente 14 fases
+  (cobre 1:1 o guia oracle-linux.md; flags --dry-run/--yes/--only/--skip/--release)
 
-**Passo 0 — Reset ACL no servidor pra desbloquear**
+**Vault Obsidian sincronizado**:
+- `KB/AI-Gateway/Deploy/Sessao-Reorg-2026-06-02.md` (parte 1)
+- `KB/AI-Gateway/Deploy/Sessao-AdminNET-2026-06-02.md` (parte 2 + micro-fixes)
+- `KB/AI-Gateway/Melhorias-Arquitetura.md` (análise Richards/Ford que motivou tudo)
+- `KB/AI-Gateway/00-Index.md` + `Deploy/_MOC.md` atualizados
 
-Fechar a janela do File Explorer. PowerShell como Administrator:
+### Como retomar (próxima sessão — provavelmente Windows)
 
-```powershell
-takeown /F E:\AIGateway /R /D Y
-icacls E:\AIGateway /reset /T
-Get-ChildItem E:\AIGateway   # confirmar acesso restaurado
-```
+Owner abre o Claude Code e diz **"vamos simular o deploy do API Gateway
+em VM Oracle Linux dev"**. Sequência esperada:
 
-**Passo 1 — Aplicar ACL correta (sem o `deny` problemático)**
-
-```powershell
-$account = "DOMAIN\sv_autoccms"   # ← substituir DOMAIN pelo AD real
-
-# Administrators full + propagar
-icacls E:\AIGateway /grant "Administrators:(OI)(CI)F" /T
-
-# Criar logs/ se ainda não existe
-New-Item -ItemType Directory -Force -Path E:\AIGateway\logs | Out-Null
-
-# Permissões por pasta
-icacls E:\AIGateway\logs        /grant "${account}:(OI)(CI)M"  /T
-icacls E:\AIGateway\bin         /grant "${account}:(OI)(CI)RX" /T
-icacls E:\AIGateway\configs     /grant "${account}:(OI)(CI)R"  /T
-icacls E:\AIGateway\migrations  /grant "${account}:(OI)(CI)R"  /T
-
-# Trava o XML do serviço (senha dentro)
-icacls E:\AIGateway\bin\gateway-service.xml /inheritance:r
-icacls E:\AIGateway\bin\gateway-service.xml /grant "SYSTEM:(F)" "Administrators:(F)" "${account}:(R)"
-```
-
-⚠️ Atenção: **NÃO usar `/deny "Users:(W)"`** — bloqueia o próprio admin
-porque a conta de admin pertence ao grupo Users localmente e `deny` tem
-precedência sobre `allow`. Foi essa linha que travou na sessão de 2026-05-29.
-
-**Passo 2 — Cifrar `gateway.env` com DPAPI**
+**Passo 0 — Sync repo + Obsidian na nova máquina**
 
 ```powershell
-$envContent = @"
-SQL_SERVER_HOST=BRSPVPDEV003.tpb.corp
-SQL_DATABASE_NAME=AzureAI_Gateway_hom
-SQL_USER=usr_sist_AzureAI_Gateway_hom
-DATABASE_PASSWORD=<SENHA_DO_USR_SIST_AZUREAI_GATEWAY_HOM>
-DB_ENCRYPTION_KEY_HEX=4b3d200ab31e8ede05af67a70632db4e02c01630eac9d1d2e5f51935117bbea1
-"@
+# Pull repo
+cd <path-onde-clonou>\ai-gateway
+git fetch
+git pull v2
 
-$bytes  = [System.Text.Encoding]::UTF8.GetBytes($envContent)
-$cipher = [System.Security.Cryptography.ProtectedData]::Protect(
-    $bytes, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
-[System.IO.File]::WriteAllBytes('E:\AIGateway\configs\gateway.env.dpapi', $cipher)
-
-icacls E:\AIGateway\configs\gateway.env.dpapi /inheritance:r
-icacls E:\AIGateway\configs\gateway.env.dpapi /grant "SYSTEM:(F)" "Administrators:(F)" "${account}:(R)"
-
-# Sanity check
-$enc = [System.IO.File]::ReadAllBytes('E:\AIGateway\configs\gateway.env.dpapi')
-$dec = [System.Security.Cryptography.ProtectedData]::Unprotect(
-    $enc, $null, [System.Security.Cryptography.DataProtectionScope]::LocalMachine)
-[System.Text.Encoding]::UTF8.GetString($dec)
-# saída esperada: as 5 linhas KEY=VALUE
+# Validar último commit
+git log --oneline -5
+# Esperado topo: 1740984 chore(deploy): 3 micro-fixes pre-deploy
+# (ou commit mais recente se o script já foi committed)
 ```
 
-**Passo 3 — Aplicar migrations (do laptop/bastion com acesso ao SQL)**
+Obsidian Sync (oficial) já trouxe as 2 novas notas em
+`KB/AI-Gateway/Deploy/Sessao-{Reorg,AdminNET}-2026-06-02.md`.
+
+**Passo 1 — Setup Windows do dev local** (se for desenvolver/buildar nessa máquina)
+
+Ver §2.B abaixo (novo).
+
+**Passo 2 — Simulação do deploy em VM Oracle Linux**
+
+Se a VM tem acesso outbound + VPN corp:
 
 ```bash
-export DATABASE_URL='sqlserver://usr_sist_AzureAI_Gateway_hom:<SENHA>@BRSPVPDEV003.tpb.corp:1433?database=AzureAI_Gateway_hom&encrypt=true&trustServerCertificate=false'
+# 1. SCP do script + certs + .env pra VM
+scp infra/scripts/deploy-oracle-linux.sh opadmin@vm-dev:/tmp/
+# Resolver secrets do KV manualmente em algum momento:
+#   az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom -o tsv
+#   az keyvault secret show --vault-name danieldev --name DB-ENCRYPTION-KEY -o tsv
+# Popular .env localmente, scp pra /etc/api-gateway/.env
 
-migrate -database "$DATABASE_URL" -path migrations up
-migrate -database "$DATABASE_URL" -path migrations version
-# esperado: 12 (após adr-0026)
+# 2. Na VM, instalar Claude Code + clonar repo
+curl -fsSL https://claude.ai/install.sh | bash
+sudo git clone git@github.com:D4nRossi/ai-gateway.git /opt/api-gateway-bootstrap
+
+# 3. Rodar Claude Code na VM com a "primeira instrução" da seção §3
+cd /opt/api-gateway-bootstrap
+claude
 ```
 
-Se aparecer `dirty=1`, ver `docs/deploy/windows.md §6.3` ou seguir o
-padrão de cleanup que owner já fez na sessão da migration 011.
+**Passo 3 — Iteração no script + push de ajustes**
 
-**Passo 4 — Instalar e iniciar o WinSW**
-
-```powershell
-cd E:\AIGateway\bin
-.\gateway-service.exe install
-Start-Service AIGateway
-Get-Service AIGateway   # esperado: Status=Running
-Get-Content E:\AIGateway\logs\AIGateway.out.log -Tail 30
-```
-
-Se o serviço falhar, ver `AIGateway.err.log` e
-`AIGateway.wrapper.log`. Causas comuns:
-
-- `sv_autoccms` sem `Logon as a service` right → `secpol.msc`
-- DPAPI env file inacessível → conferir ACL do passo 1
-- Senha do user SQL errada → editar e re-cifrar `.env.dpapi`
-
-**Passo 5 — IIS** (URL Rewrite + ARR + cert TLS) — seguir
-`docs/deploy/windows.md §8`. Pré-req: módulos URL Rewrite 2.1 + ARR 3.0
-instalados (MSIs separados, baixar na workstation com internet).
-
-**Passo 6 — Smoke test** — seguir
-`docs/deploy/windows.md §9`.
+Quando Claude Code na VM encontrar surpresas (mirror dnf, SELinux, etc.),
+o trace fica em `/tmp/deploy-trace-YYYYMMDD.md`. Depois de tudo verde,
+ele atualiza `infra/scripts/deploy-oracle-linux.sh` com os patches reais
+e abre PR.
 
 ### Frentes pendentes (sem ETA específica)
 
-- **Re-sincronizar vault Obsidian** quando o MCP voltar:
-  - 3 ADRs novas (0024/0025/0026) precisam ser espelhadas em `KB/AI-Gateway/ADRs/`
-  - Atualizar `00-Index.md` adicionando os 3 ADRs e link pra `Deploy/_MOC`
-- **Validação ao vivo da Onda 6** (header de latency breakdown + 1 query SQL).
-- **Bug 2 — Acessos não persiste** — instrumentação adicionada, aguarda repro com DevTools Network.
-- **SSO Entra ID / OIDC** (P1 Segurança — ADR sem número ainda). Quando rolar, migration remove o `root` da mig 010.
-- **Anthropic / Gemini / Cohere adapters** pra usage extractor (ADR-0024 só cobre azure_openai + openai). Quando outro provider virar P1.
-- **Percentis p50/p95/p99** no timeseries do dashboard (hoje só avg+max). `PERCENTILE_CONT` no SQL Server precisa subquery dedicada.
-- **Rotação de chaves vazadas** da POC AgentFlow — owner postergou explicitamente em 2026-05-27.
-- **Azure Language como CRUD no DB** — owner pediu isso pra ter feature CRUD. Hoje removida do yaml V1 do prod, regex local cobre Tier 2/3 PII até a feature ficar pronta.
-- **Após deploy Windows estabilizar**, decidir entre:
-  - Cache de lookup (§3.1 Desempenho, P1)
-  - SSO Entra ID
-  - Modelos como CRUD + Page Models
-  - Streaming SSE no proxy
+**Deploy + validação**:
+- Simular deploy em VM Oracle Linux dev (Claude Code lá)
+- Refinar `infra/scripts/deploy-oracle-linux.sh` com surpresas descobertas
+- Deploy real em homolog corp
+- Validar end-to-end: login admin pela `/admin/v1/auth/login` → audit row com `application_name="admin-api"` no DB
+
+**Runtime .NET**:
+- `dotnet restore` + build offline na máquina com internet (Rider/VS)
+- Rodar tests UnitTests (FluentAssertions, sem container)
+- Rodar tests IntegrationTests (precisa Docker + Testcontainers)
+- Gerar `contracts/admin-api.openapi.yaml` via Swashbuckle (ADR-0030 prometeu)
+
+**Rolagem de slices**:
+- Rolar Users no nginx routing (slice mais simples, role admin)
+- Rolar Applications CRUD
+- ... uma por vez até todas as 9
+- Fase 5: desligar admin Go
+
+**Tech debt aceito**:
+- Atualizar README.md root + CLAUDE.md removendo refs Postgres (~6 lugares)
+- Session expired cleanup .NET background service
+- Tests E2E pras 8 slices não-Auth
+
+**Frentes mais antigas (do roadmap pré-2026-06-02)**:
+- SSO Entra ID / OIDC (P1 Segurança)
+- Anthropic/Gemini/Cohere adapters pra usage extractor
+- Percentis p50/p95/p99 no dashboard
+- Rotação de chaves vazadas POC AgentFlow
+- Azure Language como CRUD no DB
 
 ---
 
-## 2. Setup máquina nova (Ubuntu notebook)
+## 2. Setup máquina nova
+
+Dois perfis cobertos: **2.A Ubuntu notebook** (manutenção do mesmo fluxo
+antigo) e **2.B Windows desktop** (nova máquina pós-2026-06-02 com .NET
+no jogo).
+
+### 2.A Ubuntu notebook
 
 Pré-requisitos do ambiente, na ordem em que precisam estar prontos:
 
@@ -334,19 +337,199 @@ Esperar a sequência de logs documentada em `docs/local-development.md §5`.
 
 Acessar `http://localhost:8080/ui` → login com `root` / `Adm!nGogateway2026` (migration 010) → se já trocou a senha na sessão anterior, usar a nova credencial pessoal.
 
+> Note: depois do desembed (ADR-0028), o gateway Go **não serve mais o UI**.
+> Pra dev local da UI, rodar `npm run dev` em `apps/console/` (porta 5173)
+> em paralelo ao gateway. Detalhes em `docs/local-development.md §3.1`.
+
+---
+
+### 2.B Windows desktop
+
+Setup pra desenvolver Go + .NET 10 + React no Windows. Owner já tem
+`amorim.286-adm1` na máquina corporativa.
+
+#### 2.B.1 Toolchain
+
+| Item | Como instalar | Validação |
+|---|---|---|
+| Go 1.25+ | https://go.dev/dl/ MSI (`go1.25.x.windows-amd64.msi`) | `go version` |
+| .NET SDK 10.0 | https://dotnet.microsoft.com/download/dotnet/10.0 (SDK x64) | `dotnet --list-sdks` mostra `10.0.x` |
+| Node 20+ | https://nodejs.org/ MSI LTS | `node -v && npm -v` |
+| Git | https://git-scm.com/download/win | `git --version` |
+| Docker Desktop | https://docs.docker.com/desktop/install/windows-install/ | `docker version && docker compose version` |
+| Azure CLI | `winget install Microsoft.AzureCLI` ou MSI | `az version` |
+| WSL2 (recomendado) | `wsl --install` (PowerShell admin) — Docker Desktop pede | `wsl --status` |
+
+Reboot depois do Docker Desktop pra Hyper-V/WSL2 entrar.
+
+#### 2.B.2 Claude Code no Windows
+
+Opção A — **dentro do WSL2** (recomendado pra paridade com Ubuntu):
+
+```bash
+# Abrir terminal Ubuntu WSL
+curl -fsSL https://claude.ai/install.sh | bash
+mkdir -p ~/projects
+cd ~/projects
+git clone git@github.com:D4nRossi/ai-gateway.git
+cd ai-gateway
+claude
+```
+
+Opção B — **direto no Windows** (PowerShell):
+
+```powershell
+# Conforme docs.claude.com/en/docs/claude-code/setup
+# (Windows native, sem WSL — pode ter incompatibilidade de paths em
+#  alguns scripts bash)
+```
+
+⚠️ **Memory do Claude Code é local por máquina** — quando subir aqui no
+Windows, o histórico de preferências/memory começa zerado. O **handoff.md
+(este arquivo) + vault Obsidian** carregam todo o contexto. Claude Code
+vai ler o handoff automaticamente.
+
+#### 2.B.3 IDEs
+
+| Stack | IDE recomendada | Setup |
+|---|---|---|
+| Go (gateway) | **GoLand** via JetBrains Toolbox | `Open` → `apps/gateway/`; usa `go.mod` ali |
+| .NET 10 (admin-api) | **Rider** ou **Visual Studio 2022 17.13+** | Open `apps/admin-api/APIGateway.Admin.sln` |
+| React (console) | **WebStorm** ou VS Code | Open `apps/console/`; `npm install` |
+
+Rider pode rodar IntegrationTests via Testcontainers se Docker Desktop ativo.
+
+#### 2.B.4 Clonar + validar
+
+```powershell
+mkdir C:\dev
+cd C:\dev
+git clone git@github.com:D4nRossi/ai-gateway.git
+cd ai-gateway
+
+# Branch e estado
+git checkout v2
+git pull
+
+# Build Go
+cd apps\gateway
+go mod download
+go vet ./...
+go build ./...
+cd ..\..
+
+# Restore + build .NET (precisa internet pra NuGet)
+cd apps\admin-api
+dotnet restore
+dotnet build APIGateway.Admin.sln
+cd ..\..
+
+# Tests UnitTests (rápidos, sem container)
+dotnet test apps\admin-api\tests\APIGateway.Admin.UnitTests\
+```
+
+Se `dotnet restore` der NU1301 timeout, configurar proxy corp em
+`%APPDATA%\NuGet\NuGet.Config` ou rodar com `--source nuget.org`.
+
+#### 2.B.5 .env e secrets
+
+Pra dev local Windows, NÃO há `.env` no repo (ignored). Pra rodar gateway+admin-api locais contra SQL Server corp:
+
+```powershell
+# 1. Login Azure no shell pra resolver KV
+az login --tenant c050c98c-b463-4591-ac3b-deb782c0ba6e
+
+# 2. Resolver secrets manualmente
+$env:DATABASE_PASSWORD = $(az keyvault secret show --vault-name danieldev --name AzureAIGateway-DB-Password-hom --query value -o tsv)
+$env:DB_ENCRYPTION_KEY = $(az keyvault secret show --vault-name danieldev --name DB-ENCRYPTION-KEY --query value -o tsv)
+$env:AZURE_OPENAI_API_KEY = $(az keyvault secret show --vault-name danieldev --name AZURE-OPENAI-API-KEY --query value -o tsv)
+
+# 3. Outros endpoints
+$env:KEYVAULT_URI = "https://danieldev.vault.azure.net/"
+$env:AZURE_OPENAI_ENDPOINT = "https://danie-mc4ryviy-westeurope.cognitiveservices.azure.com"
+
+# 4. Rodar gateway Go
+cd apps\gateway
+go run .\cmd\gateway
+
+# 5. Em outro terminal: rodar admin-api .NET
+cd apps\admin-api
+$env:ConnectionStrings__Gateway = "Server=BRSPVPDEV003.tpb.corp;Database=AzureAI_Gateway_hom;User Id=usr_sist_AzureAI_Gateway_hom;Password=$env:DATABASE_PASSWORD;Encrypt=true;TrustServerCertificate=false"
+$env:Database__EncryptionKeyHex = $env:DB_ENCRYPTION_KEY
+dotnet run --project src\APIGateway.Admin.Api -- --environment Development
+
+# 6. Em outro terminal: console
+cd apps\console
+npm install
+npm run dev
+```
+
+Browser: `http://localhost:5173/ui/`. Vite proxy roteia `/admin/v1/*` pra
+admin-api .NET (porta default 5070) e `/v1/*` pro gateway Go (8080).
+Pode precisar editar `vite.config.ts` se as portas locais diferirem.
+
+#### 2.B.6 Validação final
+
+```powershell
+# Healthchecks
+curl http://localhost:8080/healthz   # gateway Go
+curl http://localhost:5070/healthz   # admin-api .NET
+
+# Login (vai pelo admin-api .NET via Vite proxy)
+curl -X POST http://localhost:5173/admin/v1/auth/login `
+  -H "Content-Type: application/json" `
+  -d '{\"username\":\"root\",\"password\":\"Adm!nGogateway2026\"}'
+```
+
 ---
 
 ## 3. Sequência amanhã
 
-1. `git pull` no notebook
-2. Ler `docs/adrs/0023-streaming-audio-bidirecional.md` (Onda 8) — owner ainda não leu
-3. Decisão: aprovar o ADR `proposed` ou editar escopo
-4. Se aprovar:
-   - Atualizar status do ADR-0023 pra `accepted`
-   - Iniciar **Sub-onda 8.1** (proxy Pure Voice Live no gateway)
-   - Esboçar plano com Claude Code seguindo o template do CLAUDE.md §3
-5. Se ajustar:
-   - Editar ADR-0023 antes de aceitar
+Owner abre Claude Code (Windows ou WSL) e diz **"vamos simular o deploy
+em VM Oracle Linux dev"**. Sequência esperada:
+
+1. `git fetch && git pull v2` no clone Windows
+2. Validar que tem o commit do script de deploy (`infra/scripts/deploy-oracle-linux.sh`)
+3. SSH na VM Oracle Linux dev (ou montar nova)
+4. Na VM: instalar Claude Code (`curl -fsSL https://claude.ai/install.sh | bash`)
+5. Na VM: clonar repo em `/opt/api-gateway-bootstrap`
+6. Na VM: resolver secrets KV manualmente, criar `/etc/api-gateway/.env`
+7. Na VM: rodar Claude Code com primeira instrução (ver §3.1)
+8. Iterar `deploy-oracle-linux.sh` até passar 100% sem ajuste manual
+9. Quando ok: PR de update do script
+
+### 3.1 Primeira instrução pra Claude Code na VM Oracle Linux
+
+```
+Vamos simular o deploy seguindo `infra/scripts/deploy-oracle-linux.sh`
+em modo full simulation (VPN ativa, SQL corp, cert real).
+
+Antes de executar, valide manualmente:
+1. VPN ativa? `nc -vz BRSPVPDEV003.tpb.corp 1433` deve retornar succeeded
+2. Service Principal criado e tem permissões Get/List no KV danieldev
+3. /etc/api-gateway/.env existe com SQL_CONNECTION_STRING e
+   DATABASE_ENCRYPTION_KEY_HEX preenchidos (sem placeholders)
+4. tls.crt, tls.key, ca.crt em /etc/api-gateway/certs/
+
+Crie /tmp/deploy-trace-$(date +%Y%m%d).md onde vai anotando: comando
+proposto, comando executado, output truncado a 20 linhas, e quaisquer
+ajustes necessários ao script. Vamos fase por fase com confirmação:
+
+  sudo ./infra/scripts/deploy-oracle-linux.sh --only check_prereqs --dry-run
+
+Depois executa real com --yes. Sigamos sequencial até smoke_test.
+Reportar qualquer surpresa ANTES de aplicar.
+```
+
+### 3.2 Quando tudo passar
+
+```bash
+# Compare trace com script atual
+diff -u /opt/api-gateway-bootstrap/infra/scripts/deploy-oracle-linux.sh <(...)
+
+# Claude Code aplica patches que tiveram que ser feitos manualmente,
+# git commit + push, e o script vira oficial pra prod
+```
 
 Toda etapa de implementação segue o **workflow obrigatório do CLAUDE.md §3** (anunciar plano → aguardar aprovação → consultar doc oficial → implementar → validar → reportar).
 
